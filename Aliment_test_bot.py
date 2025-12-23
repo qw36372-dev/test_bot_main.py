@@ -393,16 +393,27 @@ def start_quiz(user_id, difficulty):
     show_next_question(user_id, 0)
 
 def show_next_question(user_id, question_index):
-    global bot
-    if bot is None:
-        return
-        
-    with db_lock:
-        cursor.execute("SELECT questions FROM active_tests WHERE user_id=?", (user_id,))
-        result = cursor.fetchone()
-        if not result:
-            return
-            
+    
+    # ✅ ПОЛУЧАЕМ УЖЕ ВЫБРАННЫЕ ОТВЕТЫ
+    cursor.execute("SELECT answers FROM active_tests WHERE user_id=?", (user_id,))
+    result = cursor.fetchone()
+    answers = json.loads(result[0]) if result and result[0] else []
+    selected = answers[question_index] if question_index < len(answers) else []
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    # ✅ КНОПКИ ОТВЕТОВ с индикацией выбора
+    for i, option in enumerate(q['options']):
+        status = "✅" if i in selected else "○"
+        callback = f"answer_{question_index}_{i}"
+        markup.add(types.InlineKeyboardButton(f"{status} {i+1}. {option}", callback_data=callback))
+    
+    # ✅ КНОПКА "ДАЛЕЕ" (только если есть выбор)
+    if selected:
+        markup.add(types.InlineKeyboardButton("➡️ ДАЛЕЕ", callback_data=f"next_{question_index}"))
+    
+    # ... (остальной код)
+    
         questions = json.loads(result[0])
         if question_index >= len(questions):
             finish_test(user_id)
