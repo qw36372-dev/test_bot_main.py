@@ -1,0 +1,102 @@
+[
+  {
+    "question": "Самое большое число ИЗ ПРЕДЛОЖЕННЫХ?",
+    "options": ["Два", "Четыре", "Семь", "Девять", "Один"],
+    "correct": [3]
+  },
+  {
+    "question": "Какой день недели начинается на букву «П»?",
+    "options": ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница"],
+    "correct": [0, 4]
+  },
+  {
+    "question": "Столица Франции?",
+    "options": ["Берлин", "Париж", "Мадрид", "Рим"],
+    "correct": [1]
+  },
+  {
+    "question": "Какие планеты земной группы?",
+    "options": ["Юпитер", "Марс", "Сатурн", "Земля", "Венера"],
+    "correct": [1, 3, 4]
+  },
+  {
+    "question": "Сколько будет 2 + 2 * 2?",
+    "options": ["8", "6", "12", "4"],
+    "correct": [1]
+  },
+  {
+    "question": "Какой язык программирования используется в Telegram ботах?",
+    "options": ["JavaScript", "Python", "Java", "C++"],
+    "correct": [1]
+  },
+  {
+    "question": "Что такое SQLite?",
+    "options": ["Язык программирования", "База данных", "Веб-фреймворк", "Протокол передачи данных"],
+    "correct": [1]
+  },
+  {
+    "question": "Какие HTTP методы используются в REST API?",
+    "options": ["GET", "POST", "PUT", "DELETE", "Все перечисленные"],
+    "correct": [4]
+  },
+  {
+    "question": "Что возвращает функция len() в Python?",
+    "options": ["Длину строки", "Количество элементов в списке", "Размер файла", "Тип объекта"],
+    "correct": [0, 1]
+  },
+  {
+    "question": "Основной протокол Telegram Bot API?",
+    "options": ["WebSocket", "HTTP", "TCP", "UDP"],
+    "correct": [1]
+  },
+  {
+    "question": "Что такое callback_query?",
+    "options": ["Ответ на сообщение", "Нажатие на inline кнопку", "Новый участник чата", "Изменение статуса бота"],
+    "correct": [1]
+  },
+  {
+    "question": "Формат данных для хранения вопросов?",
+    "options": ["XML", "JSON", "CSV", "YAML"],
+    "correct": [1]
+  },
+  {
+    "question": "Какая библиотека для PDF в Python?",
+    "options": ["Pillow", "ReportLab", "PyPDF2", "FPDF"],
+    "correct": [1]
+  },
+  {
+    "question": "Что делает random.sample()?",
+    "options": ["Перемешивает список", "Выбирает случайный элемент", "Выбирает уникальные элементы", "Генерирует числа"],
+    "correct": [2]
+  },
+  {
+    "question": "Основная команда запуска бота?",
+    "options": ["/start", "/help", "/test", "/info"],
+    "correct": [0]
+  },
+  {
+    "question": "Что такое threading в Python?",
+    "options": ["База данных", "Многопоточность", "Веб-сервер", "Парсер HTML"],
+    "correct": [1]
+  },
+  {
+    "question": "Максимальная длина сообщения Telegram?",
+    "options": ["1024 символа", "4096 символов", "8192 символа", "Не ограничена"],
+    "correct": [1]
+  },
+  {
+    "question": "Что такое InlineKeyboardMarkup?",
+    "options": ["Обычная клавиатура", "Кнопки под сообщением", "Скрытая клавиатура", "Меню бота"],
+    "correct": [1]
+  },
+  {
+    "question": "Формат времени в SQLite?",
+    "options": ["VARCHAR", "TIMESTAMP", "REAL (unix time)", "INTEGER"],
+    "correct": [2]
+  },
+  {
+    "question": "Какая функция для rate limiting?",
+    "options": ["time.sleep()", "threading.Timer", "time.time()", "Все вышеперечисленное"],
+    "correct": [3]
+  }
+]
