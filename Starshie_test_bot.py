@@ -445,20 +445,27 @@ def handle_answer(call):
         result = cursor.fetchone()
         answers = json.loads(result[0]) if result and result[0] else []
         
+        # ✅ ИСПРАВЛЕНИЕ: ИНИЦИАЛИЗИРУЕМ ПУСТЫЙ СПИСОК
         while len(answers) <= question_idx:
             answers.append([])
-        answers[question_idx] = [answer_idx]
+        
+        # ✅ МНОЖЕСТВЕННЫЙ ВЫБОР: ДОБАВЛЯЕМ, а не перезаписываем!
+        if answer_idx not in answers[question_idx]:
+            answers[question_idx].append(answer_idx)
         
         cursor.execute("UPDATE active_tests SET answers=? WHERE user_id=?", (json.dumps(answers), user_id))
         conn.commit()
     
-    bot.answer_callback_query(call.id, "✅ Ответ засчитан!")
+    # ✅ ПОКАЗЫВАЕМ ВЫБРАННЫЕ ОТВЕТЫ
+    selected = [idx+1 for idx in answers[question_idx]]
+    bot.answer_callback_query(call.id, f"✅ Выбрано: {selected}")
     
+    # ✅ ПЕРЕХОД К СЛЕДУЩЕМУ ВОПРОСУ ТОЛЬКО ПО КНОПКЕ "ДАЛЕЕ"
     with db_lock:
         cursor.execute("SELECT current_question FROM active_tests WHERE user_id=?", (user_id,))
         current_q = cursor.fetchone()[0]
     
-    show_next_question(user_id, current_q + 1)
+    show_next_question(user_id, current_q)
 
 def show_user_stats(user_id):
     global bot
