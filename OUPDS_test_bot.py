@@ -94,59 +94,74 @@ def start_timer(user_id, time_limit, stop_event):
         time.sleep(1)
 
 def finish_test(user_id, timeout=False):
-    """✅ ПОЛНАЯ РЕАЛИЗАЦИЯ С ОЧИСТКОЙ ПАМЯТИ"""
+    """✅ ПОЛНАЯ РЕАЛИЗАЦИЯ С ОЧИСТКОЙ ПАМЯТИ И ОТЛАДКОЙ"""
     global bot
     if bot is None:
+        print("❌ BOT НЕ ИНИЦИАЛИЗИРОВАН")
         return
         
+    print(f"🔄 Завершение теста для {user_id}")
+    
     # ✅ ОСТАНОВКА ТАЙМЕРА
     if user_id in active_timers:
         active_timers[user_id].set()
         del active_timers[user_id]
     
     if user_id not in current_test_users:
+        print(f"❌ Пользователь {user_id} не в current_test_users")
         return
-        
-    with db_lock:
-        cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
-        test_data = cursor.fetchone()
-        if not test_
-            return
-        
-        questions = json.loads(test_data[2])
-        user_answers = json.loads(test_data[3])
-        
-        score = 0
-        for i, q in enumerate(questions):
-            user_answer = user_answers[i] if i < len(user_answers) else []
-            if set(user_answer) == set(q['correct']):
-                score += 1
-        
-        total_questions = len(questions)
-        percent = (score / total_questions) * 100
-        difficulty = test_data[1]
-        grade = get_grade(percent)
-        
-        cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
-        cursor.execute("UPDATE stats SET attempts = attempts + 1, successful = successful + CASE WHEN ? >= 0.6 * ? THEN 1 ELSE 0 END, best_score = GREATEST(best_score, ?) WHERE user_id = ? AND difficulty = ?", (score, total_questions, percent, user_id, difficulty))
-        cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
-        conn.commit()
     
-    # ✅ ОЧИСТКА ПАМЯТИ
-    if user_id in current_test_users:
+    try:
+        with db_lock:
+            cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
+            test_data = cursor.fetchone()
+            if not test_
+                print(f"❌ Нет данных теста для {user_id}")
+                return
+            
+            questions = json.loads(test_data[2])
+            user_answers = json.loads(test_data[3] or '[]')
+            
+            score = 0
+            for i, q in enumerate(questions):
+                user_answer = user_answers[i] if i < len(user_answers) else []
+                if set(user_answer) == set(q['correct']):
+                    score += 1
+            
+            total_questions = len(questions)
+            percent = (score / total_questions) * 100
+            difficulty = test_data[1]
+            grade = get_grade(percent)
+            
+            cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
+            
+            # ✅ ИСПРАВЛЕННЫЙ SQL БЕЗ GREATEST (ГЛАВНАЯ ПРАВКА!)
+            cursor.execute("""
+                UPDATE stats SET 
+                attempts = attempts + 1, 
+                successful = successful + CASE WHEN ? >= 0.6 * ? THEN 1 ELSE 0 END, 
+                best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END 
+                WHERE user_id = ? AND difficulty = ?
+            """, (score, total_questions, percent, percent, user_id, difficulty))
+            
+            cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
+            conn.commit()
+            print(f"✅ Статистика сохранена: {score}/{total_questions} ({percent:.0f}%)")
+        
+        # ✅ ОЧИСТКА ПАМЯТИ
         current_test_users.discard(user_id)
-    user_last_msg.pop(user_id, None)
-    user_states.pop(user_id, None)
-    
-    cursor.execute("SELECT full_name, position, department FROM users WHERE user_id=?", (user_id,))
-    user_data = cursor.fetchone()
-    if not user_
-        user_data = ('Не указано', 'Не указано', 'Не указано')
-    
-    elapsed_time = int(time.time() - test_data[6])
-    minutes, seconds = divmod(elapsed_time, 60)
-    
-    result_text = f"""🏆 РЕЗУЛЬТАТЫ ТЕСТА
+        user_last_msg.pop(user_id, None)
+        user_states.pop(user_id, None)
+        
+        cursor.execute("SELECT full_name, position, department FROM users WHERE user_id=?", (user_id,))
+        user_data = cursor.fetchone()
+        if not user_
+            user_data = ('Не указано', 'Не указано', 'Не указано')
+        
+        elapsed_time = int(time.time() - test_data[6])
+        minutes, seconds = divmod(elapsed_time, 60)
+        
+        result_text = f"""🏆 РЕЗУЛЬТАТЫ ТЕСТА
 
 👤 Ф.И.О.: {user_data[0]}
 💼 Должность: {user_data[1]}
@@ -156,65 +171,90 @@ def finish_test(user_id, timeout=False):
 ✅ Правильных ответов: {score} из {total_questions}
 📈 Процент правильных: {percent:.0f}%
 ⏱️ Время тестирования: {minutes:02d}:{seconds:02d}"""
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("📋 Правильные ответы", callback_data=f"show_answers_{user_id}"))
-    markup.add(types.InlineKeyboardButton("📄 Сертификат", callback_data=f"cert_{user_id}"))
-    markup.add(types.InlineKeyboardButton("🔄 Повторить тест", callback_data="repeat_test"))
-    markup.add(types.InlineKeyboardButton("📊 Статистика", callback_data="show_stats"))
-    markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="start_menu"))
-    
-    bot.send_message(user_id, result_text, reply_markup=markup)
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(types.InlineKeyboardButton("📋 Правильные ответы", callback_data=f"show_answers_{user_id}"))
+        markup.add(types.InlineKeyboardButton("📄 Сертификат", callback_data=f"cert_{user_id}"))
+        markup.add(types.InlineKeyboardButton("🔄 Повторить тест", callback_data="repeat_test"))
+        markup.add(types.InlineKeyboardButton("📊 Статистика", callback_data="show_stats"))
+        markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="start_menu"))
+        
+        bot.send_message(user_id, result_text, reply_markup=markup)
+        print(f"✅ РЕЗУЛЬТАТЫ ОТПРАВЛЕНЫ {user_id}")
+        
+    except Exception as e:
+        print(f"❌ ОШИБКА finish_test {user_id}: {e}")
+        try:
+            bot.send_message(user_id, f"❌ Ошибка завершения: {str(e)}")
+        except:
+            pass
 
 def generate_certificate(user_id):
     global bot
     if bot is None:
+        print("❌ BOT НЕ ДОСТУПЕН ДЛЯ PDF")
         return
-        
-    with db_lock:
-        cursor.execute("SELECT u.full_name, u.position, u.department, s.difficulty, s.best_score FROM users u JOIN stats s ON u.user_id = s.user_id WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1", (user_id,))
-        data = cursor.fetchone()
-    
-    if not 
-        bot.send_message(user_id, "❌ Нет данных для сертификата")
-        return
-    
-    filename = f"cert_{user_id}_{int(time.time())}.pdf"
-    c = canvas.Canvas(filename, pagesize=A4)
-    width, height = A4
-    
-    c.setFont("Helvetica-Bold", 28)
-    c.drawCentredText(width/2, height-5*cm, "СЕРТИФИКАТ")
-    c.setFont("Helvetica-Bold", 18)
-    c.drawCentredText(width/2, height-8*cm, "прохождение тестирования")
-    
-    c.setFont("Helvetica", 14)
-    y = height - 12*cm
-    info = [
-        f"Ф.И.О.: {data[0] or 'Не указано'}",
-        f"Должность: {data[1] or 'Не указано'}",
-        f"Подразделение: {data[2] or 'Не указано'}",
-        f"Уровень сложности: {DIFFICULTIES[data[3]]['name']}",
-        f"Лучший результат: {data[4]:.0f}%",
-        f"Дата: {datetime.now().strftime('%d.%m.%Y')}"
-    ]
-    
-    for line in info:
-        c.drawCentredText(width/2, y, line)
-        y -= 1.2*cm
-    
-    c.save()
     
     try:
+        print(f"🔄 Генерация сертификата для {user_id}")
+        with db_lock:
+            cursor.execute("""
+                SELECT u.full_name, u.position, u.department, s.difficulty, s.best_score 
+                FROM users u JOIN stats s ON u.user_id = s.user_id 
+                WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
+            """, (user_id,))
+            data = cursor.fetchone()
+        
+        if not 
+            bot.send_message(user_id, "❌ Нет данных для сертификата. Пройдите тест!")
+            print(f"❌ Нет данных stats для {user_id}")
+            return
+        
+        filename = f"cert_{user_id}_{int(time.time())}.pdf"
+        print(f"🔄 Создание PDF: {filename}")
+        
+        c = canvas.Canvas(filename, pagesize=A4)
+        width, height = A4
+        
+        c.setFont("Helvetica-Bold", 28)
+        c.drawCentredText(width/2, height-5*cm, "СЕРТИФИКАТ")
+        c.setFont("Helvetica-Bold", 18)
+        c.drawCentredText(width/2, height-8*cm, "прохождение тестирования")
+        
+        c.setFont("Helvetica", 14)
+        y = height - 12*cm
+        info = [
+            f"Ф.И.О.: {data[0] or 'Не указано'}",
+            f"Должность: {data[1] or 'Не указано'}",
+            f"Подразделение: {data[2] or 'Не указано'}",
+            f"Уровень сложности: {DIFFICULTIES[data[3]]['name']}",
+            f"Лучший результат: {data[4]:.0f}%",
+            f"Дата: {datetime.now().strftime('%d.%m.%Y')}"
+        ]
+        
+        for line in info:
+            c.drawCentredText(width/2, y, line)
+            y -= 1.2*cm
+        
+        c.save()
+        print(f"✅ PDF создан: {filename}, размер: {os.path.getsize(filename)} байт")
+        
         with open(filename, 'rb') as f:
             bot.send_document(user_id, f, caption="📄 Ваш сертификат")
+        print(f"✅ PDF отправлен пользователю {user_id}")
+        
     except Exception as e:
-        bot.send_message(user_id, f"❌ Ошибка отправки: {str(e)}")
+        print(f"❌ Ошибка PDF {user_id}: {e}")
+        try:
+            bot.send_message(user_id, f"❌ Ошибка создания сертификата: {str(e)}")
+        except:
+            pass
     finally:
-        if os.path.exists(filename):
+        if 'filename' in locals() and os.path.exists(filename):
             os.remove(filename)
+            print(f"✅ PDF удален: {filename}")
 
-# ✅ ЭКСПОРТНЫЕ ФУНКЦИИ ДЛЯ ГЛАВНОГО БОТА (остальные функции без изменений)
+# ✅ ЭКСПОРТНЫЕ ФУНКЦИИ ДЛЯ ГЛАВНОГО БОТА
 def start_test(bot_instance, call):
     global bot
     bot = bot_instance
@@ -327,11 +367,10 @@ def handle_test_callback(call):
             
         elif data == 'start_menu':
             current_test_users.discard(user_id)
-            finish_test(user_id)
             return False
             
     except Exception as e:
-        print(f"Callback error: {e}")
+        print(f"❌ Callback error: {e}")
     
     return False
 
@@ -455,7 +494,7 @@ def show_correct_answers(user_id):
         return
     
     questions = json.loads(result[0])
-    user_answers = json.loads(result[1])
+    user_answers = json.loads(result[1] or '[]')  # ✅ ИСПРАВЛЕНО
     
     text = "📋 ПРАВИЛЬНЫЕ ОТВЕТЫ:\n\n"
     for i, q in enumerate(questions):
