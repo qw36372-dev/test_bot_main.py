@@ -33,27 +33,45 @@ loaded_bots = {}
 user_cooldown = {}
 
 def load_bot_module(filename: str):
-    if filename in loaded_bots:
+    """✅ ИСПРАВЛЕННАЯ ЛОГИКА: удаляем сломанные модули из кэша"""
+    if filename in loaded_bots and loaded_bots[filename] is not None:
         return loaded_bots[filename]
 
     full_path = os.path.join(os.path.dirname(__file__), filename)
+    logger.info(f"🔄 Попытка загрузки модуля: {filename} → {full_path}")
+    
     if not os.path.exists(full_path):
-        logger.error(f"Файл бота не найден: {full_path}")
+        logger.error(f"❌ Файл бота НЕ НАЙДЕН: {full_path}")
+        loaded_bots[filename] = None  # ✅ Помечаем как недоступный
         return None
 
     try:
+        # ✅ УДАЛЯЕМ СТАРЫЙ МОДУЛЬ ИЗ КЭША ПРИ ПЕРЕЗАГРУЗКЕ
+        if filename in loaded_bots:
+            del loaded_bots[filename]
+        
         spec = importlib.util.spec_from_file_location(filename, full_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         
-        if hasattr(module, 'init_test_module'):
-            module.init_test_module()
-            
+        # ✅ ПРОВЕРКА НАЛИЧИЯ ВСЕХ ТРЕБУЕМЫХ ФУНКЦИЙ
+        required_functions = ['init_test_module', 'start_test', 'is_test_user', 'handle_message', 'handle_callback']
+        missing = [f for f in required_functions if not hasattr(module, f)]
+        
+        if missing:
+            raise RuntimeError(f"Отсутствуют обязательные функции: {missing}")
+        
+        # ✅ ИНИЦИАЛИЗАЦИЯ МОДУЛЯ
+        module.init_test_module()
+        
         loaded_bots[filename] = module
-        logger.info(f"✅ Модуль теста загружен: {filename}")
+        logger.info(f"✅ ✅ Модуль ПОЛНОСТЬЮ загружен: {filename} ({len(required_functions)} функций)")
         return module
+        
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки модуля {filename}: {e}")
+        logger.error(f"❌ ❌ ОШИБКА загрузки {filename}: {e}")
+        logger.error(f"   Полный traceback: {str(e)}")
+        loaded_bots[filename] = None  # ✅ Помечаем как сломанный
         return None
 
 def is_spam(user_id: int, cooldown: float) -> bool:
@@ -94,13 +112,15 @@ def start(message):
 
     bot.send_message(message.chat.id, welcome_text, parse_mode="HTML", reply_markup=keyboard)
 
-# ✅ ИСПРАВЛЕННЫЙ ГЛАВНЫЙ ОБРАБОТЧИК - исключает команды
+# ✅ ГЛАВНЫЙ ОБРАБОТЧИК СООБЩЕНИЙ (только НЕ команды)
 @bot.message_handler(func=lambda message: message.text and not message.text.startswith('/') and message.text.strip())
 def global_message_handler(message):
     user_id = message.from_user.id
     
-    # ✅ ПРОВЕРКА ТЕСТОВЫХ МОДУЛЕЙ
-    for filename, module in loaded_bots.items():
+    # ✅ ПРОВЕРКА ТЕСТОВЫХ МОДУЛЕЙ (только загруженных)
+    for filename, module in list(loaded_bots.items()):
+        if module is None:  # ✅ ПРОПУСКАЕМ СЛОМАННЫЕ МОДУЛИ
+            continue
         try:
             if (hasattr(module, 'is_test_user') and 
                 module.is_test_user(user_id) and 
@@ -108,33 +128,35 @@ def global_message_handler(message):
                 if module.handle_message(message):
                     return
         except Exception as e:
-            logger.error(f"Ошибка в тестовом модуле {filename}: {e}")
-            continue  # ✅ ПРОДОЛЖАЕМ ПРОВЕРКУ
+            logger.error(f"❌ Ошибка в handle_message модуля {filename}: {e}")
+            continue
     
-    # ✅ НЕИЗВЕСТНАЯ КОМАНДА
+    # ✅ НЕИЗВЕСТНОЕ СООБЩЕНИЕ
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton("🚀 Начать тест", callback_data="start_menu"))
     bot.send_message(message.chat.id, "🚀 Нажмите кнопку для начала теста", reply_markup=keyboard)
 
-# ✅ ИСПРАВЛЕННЫЙ CALLBACK HANDLER - answer_callback_query ПЕРВЫМ
+# ✅ ГЛАВНЫЙ CALLBACK ОБРАБОТЧИК
 @bot.callback_query_handler(func=lambda call: True)
 def global_callback_handler(call):
     user_id = call.from_user.id
     
-    # ✅ КРИТИЧНО: ПЕРВЫЙ ВЫЗОВ ДЛЯ ВСЕХ CALLBACK
+    # ✅ КРИТИЧНО: ОТВЕТ НА ВСЕ CALLBACK
     bot.answer_callback_query(call.id)
     
-    # ✅ ПРОВЕРКА ТЕСТОВЫХ МОДУЛЕЙ
-    for filename, module in loaded_bots.items():
+    # ✅ ПРОВЕРКА ТЕСТОВЫХ МОДУЛЕЙ (только загруженных)
+    for filename, module in list(loaded_bots.items()):
+        if module is None:  # ✅ ПРОПУСКАЕМ СЛОМАННЫЕ
+            continue
         try:
             if (hasattr(module, 'handle_callback') and 
                 module.handle_callback(call)):
                 return
         except Exception as e:
-            logger.error(f"Ошибка callback в модуле {filename}: {e}")
-            continue  # ✅ ПРОДОЛЖАЕМ
+            logger.error(f"❌ Ошибка handle_callback в {filename}: {e}")
+            continue
     
-    # ✅ ОСНОВНАЯ ЛОГИКА
+    # ✅ ОСНОВНАЯ ЛОГИКА МЕНЮ
     data = call.data or ""
     
     if data == "start_menu":
@@ -150,24 +172,50 @@ def global_callback_handler(call):
     
     if data.startswith("test:"):
         bot_file = data.split("test:", 1)[1]
-        module = load_bot_module(bot_file)
+        logger.info(f"🚀 Запуск теста: {bot_file} для пользователя {user_id}")
         
-        if not module or not hasattr(module, "start_test"):
+        module = load_bot_module(bot_file)  # ✅ ПЕРЕЗАГРУЗИМ ПРИ НЕОБХОДИМОСТИ
+        
+        if not module:
+            error_msg = f"❌ Модуль {bot_file} не загружен. Проверьте логи."
+            logger.error(error_msg)
             try:
-                bot.edit_message_text("❌ Тест временно недоступен.", call.message.chat.id, call.message.message_id)
+                bot.edit_message_text(error_msg, call.message.chat.id, call.message.message_id)
             except:
-                bot.send_message(call.message.chat.id, "❌ Тест временно недоступен.")
+                bot.send_message(call.message.chat.id, error_msg)
+            return
+        
+        if not hasattr(module, "start_test"):
+            error_msg = f"❌ В модуле {bot_file} отсутствует функция start_test()"
+            logger.error(error_msg)
+            try:
+                bot.edit_message_text(error_msg, call.message.chat.id, call.message.message_id)
+            except:
+                bot.send_message(call.message.chat.id, error_msg)
             return
         
         try:
+            logger.info(f"✅ Запуск start_test() для {bot_file}")
             module.start_test(bot, call)
+            logger.info(f"✅ Тест {bot_file} успешно запущен")
         except Exception as e:
-            logger.error(f"Ошибка запуска теста {bot_file}: {e}")
+            error_msg = f"❌ Ошибка запуска теста {bot_file}: {str(e)[:100]}"
+            logger.error(error_msg)
+            logger.error(f"Полная ошибка: {e}")
             try:
-                bot.edit_message_text("❌ Ошибка запуска теста.", call.message.chat.id, call.message.message_id)
+                bot.edit_message_text(error_msg, call.message.chat.id, call.message.message_id)
             except:
-                bot.send_message(call.message.chat.id, "❌ Ошибка запуска теста.")
+                bot.send_message(call.message.chat.id, error_msg)
 
 if __name__ == "__main__":
     logger.info("🚀 Главный бот запущен...")
+    logger.info(f"📁 Рабочая директория: {os.getcwd()}")
+    logger.info(f"📋 Доступные модули: {list(SPECIALIZATIONS.values())}")
+    
+    # ✅ ПРОВЕРКА ФАЙЛОВ ПРИ СТАРТЕ
+    for name, filename in SPECIALIZATIONS.items():
+        full_path = os.path.join(os.path.dirname(__file__), filename)
+        status = "✅" if os.path.exists(full_path) else "❌"
+        logger.info(f"   {status} {name}: {filename}")
+    
     bot.infinity_polling()
