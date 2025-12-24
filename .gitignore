@@ -1,27 +1,6 @@
-# Базы данных (все 11 модулей)
-test_bot.db
-*_test_bot.db
-*_bot.db
 *.db
-*.db-journal
-
-# Вопросы (11 JSON файлов)
-questions.json
+*_test_bot.db
 *_questions.json
-*_bot_questions.json
-
-# Изображения и медиа
-background*.jpg*
-background*.png*
-*.jpg
-*.png
-*.jpeg
-
-# PDF сертификаты
-*.pdf
-cert_*.pdf
-
-# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -30,15 +9,37 @@ __pycache__/
 env/
 venv/
 .venv/
-pipenv/
-
-# IDE
+env.bak/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
 .DS_Store
-.vscode/
-.idea/
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.pdf
+*.jpg
+*.png
+background*
+cert_*.pdf
+nohup.out
+bot.log
+logs/
 *.swp
 *.swo
-
-# Логи
-*.log
-logs/
+*~
+*.bak
+.gitattributes
