@@ -217,4 +217,22 @@ def start_test(bot_instance, call):
             markup = types.InlineKeyboardMarkup(row_width=2)
             for diff, info in DIFFICULTIES.items():
                 markup.add(types.InlineKeyboardButton(
-                    f"{info['name']} ({info['questions']}в,
+                    f"{info['name']} ({info['questions']}в)",
+                    callback_data=f"test_diff_{diff}"
+                ))
+            bot.send_message(user_id, "Сложность:", reply_markup=markup)
+            return True
+        
+        elif data == 'show_stats':
+            show_user_stats(user_id)
+            return True
+        
+        elif data == 'start_menu':
+            current_test_users.discard(user_id)
+            return False
+            
+    except Exception as e:
+        print(f"Callback: {e}")
+    
+    return False
+
