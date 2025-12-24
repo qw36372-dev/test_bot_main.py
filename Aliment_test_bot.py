@@ -7,7 +7,6 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 import os
-import random
 from questions_library import QuestionsLibrary
 from telebot import types
 
@@ -20,6 +19,7 @@ active_timers = {}
 user_states = {}
 current_test_users = set()
 db_lock = threading.Lock()
+
 DIFFICULTIES = {
     'резерв': {'questions': 20, 'time': 35*60, 'name': 'Резерв'},
     'базовый': {'questions': 30, 'time': 25*60, 'name': 'Базовый'},
@@ -34,7 +34,6 @@ def init_test_module():
         ql = QuestionsLibrary(f"{os.path.splitext(__file__)[0]}_questions.json")
         conn = sqlite3.connect(db_name, check_same_thread=False)
         cursor = conn.cursor()
-        
         cursor.executescript('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -63,16 +62,9 @@ def init_test_module():
         );
         ''')
         conn.commit()
-        print(f"✅ Модуль {os.path.basename(__file__)} инициализирован (БД: {db_name})")
+        print(f"Модуль инициализирован (БД: {db_name})")
     except Exception as e:
-        print(f"❌ Ошибка инициализации {__file__}: {e}")
-
-def rate_limit_check(user_id):
-    now = time.time()
-    if user_id in user_last_msg and now - user_last_msg[user_id] < 1:
-        return False
-    user_last_msg[user_id] = now
-    return True
+        print(f"Ошибка инициализации {__file__}: {e}")
 
 def get_grade(percent):
     if percent >= 90: return 'отлично'
@@ -95,7 +87,6 @@ def finish_test(user_id, timeout=False):
     if bot is None:
         print("BOT НЕ ИНИЦИАЛИЗИРОВАН")
         return
-        
     print(f"Завершение теста для {user_id}")
     
     if user_id in active_timers:
@@ -110,7 +101,7 @@ def finish_test(user_id, timeout=False):
         with db_lock:
             cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
             test_data = cursor.fetchone()
-            if not test_data:
+            if not test_
                 print(f"Нет данных теста для {user_id}")
                 return
             
@@ -129,14 +120,7 @@ def finish_test(user_id, timeout=False):
             grade = get_grade(percent)
             
             cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
-            
-            sql_update = """UPDATE stats SET 
-                attempts = attempts + 1, 
-                successful = successful + CASE WHEN ? >= 0.6 * ? THEN 1 ELSE 0 END, 
-                best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END 
-                WHERE user_id = ? AND difficulty = ?"""
-            cursor.execute(sql_update, (score, total_questions, percent, percent, user_id, difficulty))
-            
+            cursor.execute("UPDATE stats SET attempts = attempts + 1, successful = successful + CASE WHEN ? >= 0.6 * ? THEN 1 ELSE 0 END, best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END WHERE user_id = ? AND difficulty = ?", (score, total_questions, percent, percent, user_id, difficulty))
             cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
             conn.commit()
         
@@ -146,21 +130,13 @@ def finish_test(user_id, timeout=False):
         
         cursor.execute("SELECT full_name, position, department FROM users WHERE user_id=?", (user_id,))
         user_data = cursor.fetchone()
-        if not user_data:
+        if not user_
             user_data = ('Не указано', 'Не указано', 'Не указано')
         
         elapsed_time = int(time.time() - test_data[6])
         minutes, seconds = divmod(elapsed_time, 60)
         
-        result_text = f"""РЕЗУЛЬТАТЫ ТЕСТА
-Ф.И.О.: {user_data[0]}
-Должность: {user_data[1]}
-Подразделение: {user_data[2]}
-Уровень: {DIFFICULTIES[difficulty]['name']}
-Оценка: {grade}
-Правильно: {score} из {total_questions}
-Процент: {percent:.0f}%
-Время: {minutes:02d}:{seconds:02d}"""
+        result_text = f"РЕЗУЛЬТАТЫ ТЕСТА\nФ.И.О.: {user_data[0]}\nДолжность: {user_data[1]}\nПодразделение: {user_data[2]}\nУровень: {DIFFICULTIES[difficulty]['name']}\nОценка: {grade}\nПравильно: {score} из {total_questions}\nПроцент: {percent:.0f}%\nВремя: {minutes:02d}:{seconds:02d}"
         
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(types.InlineKeyboardButton("Ответы", callback_data=f"show_answers_{user_id}"))
@@ -181,15 +157,11 @@ def generate_certificate(user_id):
     
     try:
         with db_lock:
-            cursor.execute("""
-                SELECT u.full_name, u.position, u.department, s.difficulty, s.best_score 
-                FROM users u JOIN stats s ON u.user_id = s.user_id 
-                WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
-            """, (user_id,))
+            cursor.execute("SELECT u.full_name, u.position, u.department, s.difficulty, s.best_score FROM users u JOIN stats s ON u.user_id = s.user_id WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1", (user_id,))
             data = cursor.fetchone()
         
-        if not   
-            bot.send_message(user_id, "❌ Нет данных для сертификата")
+        if not 
+            bot.send_message(user_id, "Нет данных для сертификата")
             return
         
         filename = f"cert_{user_id}_{int(time.time())}.pdf"
@@ -220,14 +192,14 @@ def generate_certificate(user_id):
         
         try:
             with open(filename, 'rb') as f:
-                bot.send_document(user_id, f, caption="📄 Сертификат")
+                bot.send_document(user_id, f, caption="Сертификат")
         except Exception as e:
-            bot.send_message(user_id, f"❌ Ошибка PDF: {e}")
+            bot.send_message(user_id, f"Ошибка PDF: {e}")
         finally:
             if os.path.exists(filename):
                 os.remove(filename)
     except Exception as e:
-        print(f"❌ generate_certificate {user_id}: {e}")
+        print(f"generate_certificate {user_id}: {e}")
 
 def start_test(bot_instance, call):
     global bot
@@ -252,14 +224,11 @@ def start_test(bot_instance, call):
                     f"{info['name']} ({info['questions']}в, {info['time']//60}м)",
                     callback_data=f"test_diff_{diff}"
                 ))
-            bot.edit_message_text("🎯 Выберите сложность:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+            bot.edit_message_text("Выберите сложность:", call.message.chat.id, call.message.message_id, reply_markup=markup)
         else:
             user_states[user_id] = 'waiting_name'
-            bot.send_message(user_id, "👋 Введите Ф.И.О.:")
-            bot.send_message(user_id, "⚠️ Время ограничено!")
-
-def handle_test_text(message):
-    pass
+            bot.send_message(user_id, "Введите Ф.И.О.:")
+            bot.send_message(user_id, "Время ограничено!")
 
 def start_quiz(user_id, difficulty):
     config = DIFFICULTIES[difficulty]
@@ -297,16 +266,16 @@ def show_next_question(user_id, question_index):
         
         markup = types.InlineKeyboardMarkup(row_width=1)
         for i, option in enumerate(q['options']):
-            status = "✅" if i in selected else "○"
+            status = "X" if i in selected else "O"
             markup.add(types.InlineKeyboardButton(
                 f"{status} {i+1}. {option}", 
                 callback_data=f"answer_{question_index}_{i}"
             ))
         
         if selected:
-            markup.add(types.InlineKeyboardButton("➡️ ДАЛЕЕ", callback_data=f"next_{question_index}"))
+            markup.add(types.InlineKeyboardButton("ДАЛЕЕ", callback_data=f"next_{question_index}"))
         
-        question_text = f"⏰ Время...\n📝 {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
+        question_text = f"Время...\n{question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
         
         cursor.execute("SELECT message_id FROM active_tests WHERE user_id=?", (user_id,))
         msg_result = cursor.fetchone()
@@ -347,8 +316,7 @@ def handle_answer(call):
         conn.commit()
     
     selected = [idx+1 for idx in answers[question_idx]]
-    bot.answer_callback_query(call.id, f"✅ Выбрано: {selected}")
-    
+    bot.answer_callback_query(call.id, f"Выбрано: {selected}")
     show_next_question(user_id, question_idx)
 
 def show_user_stats(user_id):
@@ -361,13 +329,13 @@ def show_user_stats(user_id):
         stats = cursor.fetchall()
     
     if not stats:
-        bot.send_message(user_id, "📊 Статистика пуста")
+        bot.send_message(user_id, "Статистика пуста")
         return
     
-    text = "📊 Статистика:\n\n"
+    text = "Статистика:\n\n"
     for diff, attempts, success, score in stats:
         rate = f"{success}/{attempts}" if attempts else "0/0"
-        text += f"• {DIFFICULTIES[diff]['name']}: {rate} ({score:.0f}%)\n"
+        text += f"{DIFFICULTIES[diff]['name']}: {rate} ({score:.0f}%)\n"
     
     bot.send_message(user_id, text)
 
@@ -381,17 +349,17 @@ def show_correct_answers(user_id):
         result = cursor.fetchone()
     
     if not result:
-        bot.send_message(user_id, "❌ Нет теста")
+        bot.send_message(user_id, "Нет теста")
         return
     
     questions = json.loads(result[0])
     answers = json.loads(result[1] or '[]')
     
-    text = "📋 ПРАВИЛЬНЫЕ ОТВЕТЫ:\n\n"
+    text = "ПРАВИЛЬНЫЕ ОТВЕТЫ:\n\n"
     for i, q in enumerate(questions):
         user_ans = answers[i] if i < len(answers) else []
         correct = [idx+1 for idx in q['correct']]
-        status = "✅" if set(user_ans) == set(q['correct']) else "❌"
+        status = "X" if set(user_ans) == set(q['correct']) else "O"
         text += f"{status} Вопрос {i+1}: {q['question']}\nПравильно: {', '.join(map(str, correct))}\n\n"
     
     for i in range(0, len(text), 4000):
@@ -401,7 +369,7 @@ def is_test_user(user_id):
     return user_id in current_test_users
 
 def handle_message(message):
-    return handle_test_text(message)
+    return False
 
 def handle_callback(call):
     user_id = call.from_user.id
@@ -442,7 +410,7 @@ def handle_callback(call):
                     f"{info['name']} ({info['questions']}в)",
                     callback_data=f"test_diff_{diff}"
                 ))
-            bot.send_message(user_id, "🎯 Сложность:", reply_markup=markup)
+            bot.send_message(user_id, "Сложность:", reply_markup=markup)
             return True
         
         elif data == 'show_stats':
@@ -454,6 +422,6 @@ def handle_callback(call):
             return False
             
     except Exception as e:
-        print(f"❌ Callback: {e}")
+        print(f"Callback: {e}")
     
     return False
