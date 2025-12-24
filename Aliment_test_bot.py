@@ -113,8 +113,6 @@ def finish_test(user_id, timeout=False):
             cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
             test_data = cursor.fetchone()
             if not test_  # ✅ ИСПРАВЛЕНО
-                print(f"
-
                 print(f"❌ Нет данных теста для {user_id}")
                 return
             
