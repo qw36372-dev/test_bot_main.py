@@ -111,9 +111,12 @@ def finish_test(user_id, timeout=False):
         with db_lock:
             cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
             test_data = cursor.fetchone()
-            if not test_  # ✅ ИСПРАВЛЕНО: строка 116
+            if not test_  # ✅ Строка 114 - ПРАВИЛЬНО
                 print(f"❌ Нет данных теста для {user_id}")
-                return
+                return  # ✅ Без лишних отступов
+            
+            questions = json.loads(test_data[2])  # ✅ Правильный отступ
+
             
             questions = json.loads(test_data[2])
             user_answers = json.loads(test_data[3] or '[]')
