@@ -93,25 +93,25 @@ def start_timer(user_id, time_limit, stop_event):
 def finish_test(user_id, timeout=False):
     global bot
     if bot is None:
-        print("❌ BOT НЕ ИНИЦИАЛИЗИРОВАН")
+        print("BOT НЕ ИНИЦИАЛИЗИРОВАН")
         return
         
-    print(f"🔄 Завершение теста для {user_id}")
+    print(f"Завершение теста для {user_id}")
     
     if user_id in active_timers:
         active_timers[user_id].set()
         del active_timers[user_id]
     
     if user_id not in current_test_users:
-        print(f"❌ Пользователь {user_id} не в current_test_users")
+        print(f"Пользователь {user_id} не в current_test_users")
         return
     
     try:
         with db_lock:
             cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
             test_data = cursor.fetchone()
-            if not test_
-                print(f"❌ Нет данных теста для {user_id}")
+            if not test_data:
+                print(f"Нет данных теста для {user_id}")
                 return
             
             questions = json.loads(test_data[2])
@@ -129,13 +129,14 @@ def finish_test(user_id, timeout=False):
             grade = get_grade(percent)
             
             cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
-            cursor.execute("""
-                UPDATE stats SET 
+            
+            sql_update = """UPDATE stats SET 
                 attempts = attempts + 1, 
                 successful = successful + CASE WHEN ? >= 0.6 * ? THEN 1 ELSE 0 END, 
                 best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END 
-                WHERE user_id = ? AND difficulty = ?
-            """, (score, total_questions, percent, percent, user_id, difficulty))
+                WHERE user_id = ? AND difficulty = ?"""
+            cursor.execute(sql_update, (score, total_questions, percent, percent, user_id, difficulty))
+            
             cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
             conn.commit()
         
@@ -145,33 +146,33 @@ def finish_test(user_id, timeout=False):
         
         cursor.execute("SELECT full_name, position, department FROM users WHERE user_id=?", (user_id,))
         user_data = cursor.fetchone()
-        if not user_
+        if not user_data:
             user_data = ('Не указано', 'Не указано', 'Не указано')
         
         elapsed_time = int(time.time() - test_data[6])
         minutes, seconds = divmod(elapsed_time, 60)
         
-        result_text = f"""🏆 РЕЗУЛЬТАТЫ ТЕСТА
-👤 Ф.И.О.: {user_data[0]}
-💼 Должность: {user_data[1]}
-🏢 Подразделение: {user_data[2]}
-🎯 Уровень: {DIFFICULTIES[difficulty]['name']}
-📊 Оценка: {grade}
-✅ Правильно: {score} из {total_questions}
-📈 Процент: {percent:.0f}%
-⏱️ Время: {minutes:02d}:{seconds:02d}"""
+        result_text = f"""РЕЗУЛЬТАТЫ ТЕСТА
+Ф.И.О.: {user_data[0]}
+Должность: {user_data[1]}
+Подразделение: {user_data[2]}
+Уровень: {DIFFICULTIES[difficulty]['name']}
+Оценка: {grade}
+Правильно: {score} из {total_questions}
+Процент: {percent:.0f}%
+Время: {minutes:02d}:{seconds:02d}"""
         
         markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(types.InlineKeyboardButton("📋 Ответы", callback_data=f"show_answers_{user_id}"))
-        markup.add(types.InlineKeyboardButton("📄 Сертификат", callback_data=f"cert_{user_id}"))
-        markup.add(types.InlineKeyboardButton("🔄 Повторить", callback_data="repeat_test"))
-        markup.add(types.InlineKeyboardButton("📊 Статистика", callback_data="show_stats"))
-        markup.add(types.InlineKeyboardButton("🏠 Меню", callback_data="start_menu"))
+        markup.add(types.InlineKeyboardButton("Ответы", callback_data=f"show_answers_{user_id}"))
+        markup.add(types.InlineKeyboardButton("Сертификат", callback_data=f"cert_{user_id}"))
+        markup.add(types.InlineKeyboardButton("Повторить", callback_data="repeat_test"))
+        markup.add(types.InlineKeyboardButton("Статистика", callback_data="show_stats"))
+        markup.add(types.InlineKeyboardButton("Меню", callback_data="start_menu"))
         
         bot.send_message(user_id, result_text, reply_markup=markup)
         
     except Exception as e:
-        print(f"❌ finish_test {user_id}: {e}")
+        print(f"finish_test {user_id}: {e}")
 
 def generate_certificate(user_id):
     global bot
