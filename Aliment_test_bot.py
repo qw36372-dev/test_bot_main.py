@@ -116,7 +116,6 @@ def finish_test(user_id, timeout=False):
                 return  # ✅ Без лишних отступов
             
             questions = json.loads(test_data[2])  # ✅ Правильный отступ
-
             
             questions = json.loads(test_data[2])
             user_answers = json.loads(test_data[3] or '[]')
