@@ -11,7 +11,6 @@ import random
 from questions_library import QuestionsLibrary
 from telebot import types
 
-# Глобальные объекты
 ql = None
 conn = None
 cursor = None
@@ -111,11 +110,9 @@ def finish_test(user_id, timeout=False):
         with db_lock:
             cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
             test_data = cursor.fetchone()
-            if not test_  # ✅ Строка 114 - ПРАВИЛЬНО
+            if not test_
                 print(f"❌ Нет данных теста для {user_id}")
-                return  # ✅ Без лишних отступов
-            
-            questions = json.loads(test_data[2])  # ✅ Правильный отступ
+                return
             
             questions = json.loads(test_data[2])
             user_answers = json.loads(test_data[3] or '[]')
@@ -148,7 +145,7 @@ def finish_test(user_id, timeout=False):
         
         cursor.execute("SELECT full_name, position, department FROM users WHERE user_id=?", (user_id,))
         user_data = cursor.fetchone()
-        if not user_  # ✅ ИСПРАВЛЕНО
+        if not user_
             user_data = ('Не указано', 'Не указано', 'Не указано')
         
         elapsed_time = int(time.time() - test_data[6])
@@ -188,9 +185,9 @@ def generate_certificate(user_id):
                 FROM users u JOIN stats s ON u.user_id = s.user_id 
                 WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
             """, (user_id,))
-            data = cursor.fetchone()  # ✅ ИСПРАВЛЕНО
+            data = cursor.fetchone()
         
-        if not   # ✅ ИСПРАВЛЕНО
+        if not 
             bot.send_message(user_id, "❌ Нет данных для сертификата")
             return
         
@@ -261,10 +258,7 @@ def start_test(bot_instance, call):
             bot.send_message(user_id, "⚠️ Время ограничено!")
 
 def handle_test_text(message):
-    pass  # Реализация по необходимости
-
-def handle_test_callback(call):
-    pass  # Реализация по необходимости
+    pass
 
 def start_quiz(user_id, difficulty):
     config = DIFFICULTIES[difficulty]
@@ -314,7 +308,7 @@ def show_next_question(user_id, question_index):
         question_text = f"⏰ Время...\n📝 {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
         
         cursor.execute("SELECT message_id FROM active_tests WHERE user_id=?", (user_id,))
-        msg_result = cursor.fetchone()  # ✅ ИСПРАВЛЕНО
+        msg_result = cursor.fetchone()
         
         try:
             if msg_result and msg_result[0]:
@@ -333,7 +327,7 @@ def show_next_question(user_id, question_index):
 
 def handle_answer(call):
     data = call.data.split('_')
-    question_idx = int(data[1])  # ✅ ИСПРАВЛЕНО
+    question_idx = int(data[1])
     answer_idx = int(data[2])
     user_id = call.from_user.id
     
@@ -363,7 +357,7 @@ def show_user_stats(user_id):
     
     with db_lock:
         cursor.execute("SELECT difficulty, attempts, successful, best_score FROM stats WHERE user_id=?", (user_id,))
-        stats = cursor.fetchall()  # ✅ ИСПРАВЛЕНО
+        stats = cursor.fetchall()
     
     if not stats:
         bot.send_message(user_id, "📊 Статистика пуста")
@@ -402,7 +396,6 @@ def show_correct_answers(user_id):
     for i in range(0, len(text), 4000):
         bot.send_message(user_id, text[i:i+4000])
 
-# ═══════════════ ОБЯЗАТЕЛЬНЫЕ ЭКСПОРТНЫЕ ФУНКЦИИ ═══════════════
 def is_test_user(user_id):
     return user_id in current_test_users
 
