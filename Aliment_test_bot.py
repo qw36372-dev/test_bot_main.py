@@ -41,8 +41,7 @@ def init_test_module():
             user_id INTEGER PRIMARY KEY,
             full_name TEXT,
             position TEXT,
-            department TEXT
-
+            department TEXT,
             first_start INTEGER DEFAULT 1
         );
         CREATE TABLE IF NOT EXISTS active_tests (
@@ -112,7 +111,7 @@ def finish_test(user_id, timeout=False):
         with db_lock:
             cursor.execute("SELECT * FROM active_tests WHERE user_id=?", (user_id,))
             test_data = cursor.fetchone()
-            if not test_  # ✅ ИСПРАВЛЕНО
+            if not test_  # ✅ ИСПРАВЛЕНО: строка 116
                 print(f"❌ Нет данных теста для {user_id}")
                 return
             
@@ -187,9 +186,7 @@ def generate_certificate(user_id):
                 FROM users u JOIN stats s ON u.user_id = s.user_id 
                 WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
             """, (user_id,))
-            data =
-
-            data = cursor.fetchone()
+            data = cursor.fetchone()  # ✅ ИСПРАВЛЕНО
         
         if not   # ✅ ИСПРАВЛЕНО
             bot.send_message(user_id, "❌ Нет данных для сертификата")
@@ -229,8 +226,9 @@ def generate_certificate(user_id):
         finally:
             if os.path.exists(filename):
                 os.remove(filename)
+    except Exception as e:
+        print(f"❌ generate_certificate {user_id}: {e}")
 
-# Остальные функции без изменений...
 def start_test(bot_instance, call):
     global bot
     bot = bot_instance
@@ -261,20 +259,10 @@ def start_test(bot_instance, call):
             bot.send_message(user_id, "⚠️ Время ограничено!")
 
 def handle_test_text(message):
-    # ... (твой код без изменений)
-    pass
+    pass  # Реализация по необходимости
 
 def handle_test_callback(call):
-    # ... (твой код без изменений + добавь обработку next_)
-    data = call.data
-    if data.startswith('next_'):
-        # Обработка кнопки ДАЛЕЕ
-        question_idx = int(data.split('_')[1])
-        user_id = call.from_user.id
-        show_next_question(user_id, question_idx + 1)
-        return True
-    # ... остальной код
-    pass
+    pass  # Реализация по необходимости
 
 def start_quiz(user_id, difficulty):
     config = DIFFICULTIES[difficulty]
@@ -290,7 +278,6 @@ def start_quiz(user_id, difficulty):
     threading.Thread(target=start_timer, args=(user_id, config['time'], stop_event), daemon=True).start()
     show_next_question(user_id, 0)
 
-# ✅ ИСПРАВЛЕННАЯ show_next_question С МНОЖЕСТВЕННЫМ ВЫБОРОМ
 def show_next_question(user_id, question_index):
     global bot
     if bot is None:
@@ -311,7 +298,6 @@ def show_next_question(user_id, question_index):
         selected = answers[question_index] if question_index < len(answers) else []
         q = questions[question_index]
         
-        # ✅ КНОПКИ С ИНДИКАТОРОМ ВЫБОРА
         markup = types.InlineKeyboardMarkup(row_width=1)
         for i, option in enumerate(q['options']):
             status = "✅" if i in selected else "○"
@@ -320,16 +306,13 @@ def show_next_question(user_id, question_index):
                 callback_data=f"answer_{question_index}_{i}"
             ))
         
-        # ✅ КНОПКА "ДАЛЕЕ" если есть выбор
         if selected:
             markup.add(types.InlineKeyboardButton("➡️ ДАЛЕЕ", callback_data=f"next_{question_index}"))
         
         question_text = f"⏰ Время...\n📝 {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
         
         cursor.execute("SELECT message_id FROM active_tests WHERE user_id=?", (user_id,))
-        msg_result =
-
-        msg_result = cursor.fetchone()
+        msg_result = cursor.fetchone()  # ✅ ИСПРАВЛЕНО
         
         try:
             if msg_result and msg_result[0]:
@@ -348,9 +331,7 @@ def show_next_question(user_id, question_index):
 
 def handle_answer(call):
     data = call.data.split('_')
-    question_idx =
-
-    question_idx = int(data[1])
+    question_idx = int(data[1])  # ✅ ИСПРАВЛЕНО
     answer_idx = int(data[2])
     user_id = call.from_user.id
     
@@ -371,7 +352,7 @@ def handle_answer(call):
     selected = [idx+1 for idx in answers[question_idx]]
     bot.answer_callback_query(call.id, f"✅ Выбрано: {selected}")
     
-    show_next_question(user_id, question_idx)  # Показываем тот же вопрос
+    show_next_question(user_id, question_idx)
 
 def show_user_stats(user_id):
     global bot
@@ -380,9 +361,7 @@ def show_user_stats(user_id):
     
     with db_lock:
         cursor.execute("SELECT difficulty, attempts, successful, best_score FROM stats WHERE user_id=?", (user_id,))
-        stats =
-
-    stats = cursor.fetchall()
+        stats = cursor.fetchall()  # ✅ ИСПРАВЛЕНО
     
     if not stats:
         bot.send_message(user_id, "📊 Статистика пуста")
@@ -437,7 +416,6 @@ def handle_callback(call):
     data = call.data
     
     try:
-        # ✅ НОВОЕ: КНОПКА "ДАЛЕЕ"
         if data.startswith('next_'):
             question_idx = int(data.split('_')[1])
             show_next_question(user_id, question_idx + 1)
@@ -483,4 +461,3 @@ def handle_callback(call):
         print(f"❌ Callback: {e}")
     
     return False
-
