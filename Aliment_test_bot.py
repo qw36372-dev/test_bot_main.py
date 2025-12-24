@@ -22,8 +22,9 @@ user_states = {}
 
 DIFFICULTIES = {
     'rezerv': {'questions': 20, 'time': 35*60, 'name': 'Резерв'},
-    'slozhno': {'questions': 30, 'time': 45*60, 'name': 'Сложно'},
-    'expert': {'questions': 50, 'time': 90*60, 'name': 'Эксперт'}
+    'baza': {'questions': 30, 'time': 30*60, 'name': 'Базовый'},
+    'standard': {'questions': 40, 'time': 20*60, 'name': 'Стандартный'},
+    'expert': {'questions': 50, 'time': 20*60, 'name': 'Эксперт'}
 }
 
 def init_test_module():
