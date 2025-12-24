@@ -60,7 +60,7 @@
     "correct": [1]
   },
   {
-    "question": "Какая библиотека для PDF в Python?",
+    "question": "Какая такая библиотека для PDF в Python?",
     "options": ["Pillow", "ReportLab", "PyPDF2", "FPDF"],
     "correct": [1]
   },
