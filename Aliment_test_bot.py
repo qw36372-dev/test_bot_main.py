@@ -188,7 +188,7 @@ def generate_certificate(user_id):
             """, (user_id,))
             data = cursor.fetchone()
         
-        if not 
+        if not   
             bot.send_message(user_id, "❌ Нет данных для сертификата")
             return
         
