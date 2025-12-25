@@ -27,6 +27,12 @@ DIFFICULTIES = {
     'expert': {'questions': 50, 'time': 20*60, 'name': 'Эксперт'}
 }
 
+def show_difficulty_menu(user_id, message_id):
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for diff, info in DIFFICULTIES.items():
+        markup.add(types.InlineKeyboardButton(f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", callback_data=f"{diff}_start"))
+    bot.edit_message_text("Выберите сложность:", user_id, message_id, reply_markup=markup)
+
 def init_test_module():
     global ql, conn, cursor
     try:
