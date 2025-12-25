@@ -129,19 +129,19 @@ def specialization_handler(call):
         spec_name = data[7:]
         filename = SPECIALIZATIONS.get(spec_name)
         if filename:
-            loaded_bots[filename] = load_bot_module(os.path.join(os.path.dirname(__file__), filename))
+            full_path = os.path.join(os.path.dirname(__file__), filename)
+            loaded_bots[filename] = load_bot_module(full_path)
             bot.answer_callback_query(call.id, f"Модуль {spec_name} перезагружен")
         return
     filename = SPECIALIZATIONS.get(data)
     if filename and filename in loaded_bots and loaded_bots[filename]:
+        bot.answer_callback_query(call.id, "Выберите сложность")
         try:
-            loaded_bots[filename].start_test(bot, call)
-            bot.answer_callback_query(call.id)
-        except Exception as e:
-            logger.error(f"Start test error {filename}: {e}")
-            bot.answer_callback_query(call.id, "Ошибка запуска теста", show_alert=True)
+            loaded_bots[filename].show_difficulty_menu(call.from_user.id, call.message.message_id)
+        except:
+            bot.answer_callback_query(call.id, "Ошибка меню", show_alert=True)
     else:
-        bot.answer_callback_query(call.id, "Модуль не загружен. Проверьте логи", show_alert=True)
+        bot.answer_callback_query(call.id, "Модуль не загружен", show_alert=True)
 
 def signal_handler(sig, frame):
     logger.info("Shutting down gracefully...")
