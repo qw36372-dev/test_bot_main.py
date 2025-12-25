@@ -64,6 +64,12 @@ def reload_modules():
             loaded_bots[filename] = None
             logger.warning(f"Missing file: {filename}")
 
+def safe_delete_message(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
 def show_main_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn1 = types.KeyboardButton("ООУПДС")
@@ -78,7 +84,17 @@ def show_main_menu(message):
     btn10 = types.KeyboardButton("ОСБ")
     btn11 = types.KeyboardButton("Управление")
     markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8, btn9, btn10, btn11)
-    bot.send_message(message.chat.id, "Выберите специализацию:", reply_markup=markup)
+    if message.reply_to_message:
+        sent_msg = bot.send_message(
+            message.chat.id, 
+            "Главное меню. Выберите специализацию:", 
+            reply_to_message_id=message.reply_to_message.message_id,
+            reply_markup=markup
+        )
+    else:
+        sent_msg = bot.send_message(message.chat.id, "Главное меню. Выберите специализацию:", reply_markup=markup)
+    safe_delete_message(message.chat.id, message.message_id)
+    return sent_msg
 
 @bot.message_handler(commands=['start'])
 def start_handler(message):
@@ -86,15 +102,17 @@ def start_handler(message):
 
 @bot.message_handler(func=lambda message: True)
 def global_message_handler(message):
-    text = message.text.strip()
+    text = message.text.strip() if message.text else ""
     for name, filename in SPECIALIZATIONS.items():
-        if text in [name, f"ООУПДС {name}", f"Исполнители {name}", f"Дознание {name}", f"Алименты {name}", f"Розыск {name}", name, f"ОПП {name}", f"ОКО {name}", f"Информатизация {name}",f"Кадры {name}", f"ОСБ {name}", f"Управление {name}"]:
+        if text == name:
+            safe_delete_message(message.chat.id, message.message_id)
             handle_specialization(message, name)
             return
     for filename, module in loaded_bots.items():
         if module and hasattr(module, 'handle_message') and module.handle_message(message):
             return
-    bot.reply_to(message, "Нажмите кнопку специализации или /start")
+    safe_delete_message(message.chat.id, message.message_id)
+    show_main_menu(message)
 
 @bot.callback_query_handler(func=lambda call: True)
 def global_callback_handler(call):
@@ -111,6 +129,7 @@ def global_callback_handler(call):
 def handle_specialization(message, specialization_name):
     filename = SPECIALIZATIONS.get(specialization_name)
     if not filename or filename not in loaded_bots or not loaded_bots[filename]:
+        safe_delete_message(message.chat.id, message.message_id)
         bot.reply_to(message, f"Модуль {specialization_name} не загружен. Проверьте логи.")
         return
     try:
@@ -120,6 +139,7 @@ def handle_specialization(message, specialization_name):
         bot.reply_to(message, f"Специализация: {specialization_name}", reply_markup=markup)
     except Exception as e:
         logger.error(f"Specialization error {specialization_name}: {e}")
+        safe_delete_message(message.chat.id, message.message_id)
         bot.reply_to(message, "Ошибка запуска специализации")
 
 @bot.callback_query_handler(func=lambda call: call.data in SPECIALIZATIONS or call.data.startswith('reload_'))
@@ -132,11 +152,13 @@ def specialization_handler(call):
             full_path = os.path.join(os.path.dirname(__file__), filename)
             loaded_bots[filename] = load_bot_module(full_path)
             bot.answer_callback_query(call.id, f"Модуль {spec_name} перезагружен")
+        safe_delete_message(call.message.chat.id, call.message.message_id)
         return
     filename = SPECIALIZATIONS.get(data)
     if filename and filename in loaded_bots and loaded_bots[filename]:
         bot.answer_callback_query(call.id, "Выберите сложность")
         try:
+            safe_delete_message(call.message.chat.id, call.message.message_id)
             loaded_bots[filename].show_difficulty_menu(call.from_user.id, call.message.message_id)
         except:
             bot.answer_callback_query(call.id, "Ошибка меню", show_alert=True)
@@ -145,8 +167,6 @@ def specialization_handler(call):
 
 def signal_handler(sig, frame):
     logger.info("Shutting down gracefully...")
-    for timer in active_timers.values():
-        timer.cancel()
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -158,11 +178,11 @@ if __name__ == "__main__":
     logger.info("Available modules:")
     for name, filename in SPECIALIZATIONS.items():
         full_path = os.path.join(os.path.dirname(__file__), filename)
-        status = "✅ OK" if filename in loaded_bots and loaded_bots[filename] else "Недоступен"
+        status = "OK" if filename in loaded_bots and loaded_bots[filename] else "MISSING"
         logger.info(f"  {status} {name}: {filename}")
     try:
         bot.infinity_polling(none_stop=True, interval=1, timeout=30)
     except KeyboardInterrupt:
-        logger.info("Тест временно недоступен")
+        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Ошибка запуска теста: {e}")
+        logger.error(f"Bot crashed: {e}")
