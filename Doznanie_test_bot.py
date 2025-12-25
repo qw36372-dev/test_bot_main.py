@@ -22,10 +22,16 @@ user_states = {}
 
 DIFFICULTIES = {
     'rezerv': {'questions': 20, 'time': 35*60, 'name': 'Резерв'},
-    'baza': {'questions': 30, 'time': 30*60, 'name': 'Базовый'},
-    'standard': {'questions': 40, 'time': 20*60, 'name': 'Стандартный'},
-    'expert': {'questions': 50, 'time': 20*60, 'name': 'Эксперт'}
+    'bazovyy': {'questions': 25, 'time': 40*60, 'name': 'Базовый'},
+    'standart': {'questions': 30, 'time': 45*60, 'name': 'Стандартный'},
+    'expert': {'questions': 50, 'time': 90*60, 'name': 'Эксперт'}
 }
+
+def safe_delete_message(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except:
+        pass
 
 def init_test_module():
     global ql, conn, cursor
@@ -40,6 +46,12 @@ def init_test_module():
     except Exception as e:
         print(f"Aliment init error: {e}")
         raise
+
+def show_difficulty_menu(user_id, message_id):
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for diff, info in DIFFICULTIES.items():
+        markup.add(types.InlineKeyboardButton(f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", callback_data=f"{diff}_start"))
+    bot.edit_message_text("Выберите сложность:", user_id, message_id, reply_markup=markup)
 
 def start_test(bot_instance, call):
     global bot
@@ -56,12 +68,6 @@ def start_test(bot_instance, call):
             bot.send_message(user_id, "Введите ФИО:")
             user_states[user_id] = 'full_name'
     conn.commit()
-
-def show_difficulty_menu(user_id, message_id):
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for diff, info in DIFFICULTIES.items():
-        markup.add(types.InlineKeyboardButton(f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", callback_data=f"{diff}_start"))
-    bot.edit_message_text("Выберите сложность:", user_id, message_id, reply_markup=markup)
 
 def handle_test_text(message):
     user_id = message.from_user.id
@@ -108,12 +114,12 @@ def show_next_question(user_id, question_index):
         selected = [idx+1 for idx in answers[question_index]]
         markup = types.InlineKeyboardMarkup(row_width=2)
         for i, option in enumerate(q['options']):
-            status = "✅" if i in answers[question_index] else str(i+1)
+            status = "X" if i in answers[question_index] else str(i+1)
             markup.add(types.InlineKeyboardButton(f"{status} {option}", callback_data=f"answer_{question_index}_{i}"))
         if selected:
-            markup.add(types.InlineKeyboardButton("➡️ Далее", callback_data=f"next_{question_index}"))
+            markup.add(types.InlineKeyboardButton("Далее", callback_data=f"next_{question_index}"))
         remain_time = get_remaining_time(user_id)
-        question_text = f"⏰ {int(remain_time)}с\n📝 {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
+        question_text = f"{int(remain_time)}с {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
         cursor.execute("SELECT message_id FROM active_tests WHERE user_id=?", (user_id,))
         msg_result = cursor.fetchone()
         try:
@@ -144,7 +150,7 @@ def handle_answer(call):
         cursor.execute("UPDATE active_tests SET answers=? WHERE user_id=?", (json.dumps(answers), user_id))
         conn.commit()
     selected = [idx+1 for idx in answers[question_idx]]
-    bot.answer_callback_query(call.id, f"✅ Выбрано: {selected}")
+    bot.answer_callback_query(call.id, f"Выбрано: {selected}")
     show_next_question(user_id, question_idx)
 
 def finish_test(user_id, timeout=False):
@@ -154,7 +160,7 @@ def finish_test(user_id, timeout=False):
     if user_id not in current_test_users:
         return
     with db_lock:
-        cursor.execute("SELECT questions, answers, start_time, difficulty FROM active_tests WHERE user_id=?", (user_id,))
+        cursor.execute("SELECT questions, answers, start_time, difficulty, message_id FROM active_tests WHERE user_id=?", (user_id,))
         result = cursor.fetchone()
         if not result:
             bot.send_message(user_id, "Нет данных теста")
@@ -163,6 +169,7 @@ def finish_test(user_id, timeout=False):
         user_answers = json.loads(result[1])
         start_time = result[2]
         difficulty = result[3]
+        msg_id = result[4]
         test_time = time.time() - start_time
         score = 0
         for i, q in enumerate(questions):
@@ -174,11 +181,12 @@ def finish_test(user_id, timeout=False):
         cursor.execute("UPDATE stats SET attempts = attempts + 1, successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END, avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts - 1) + ?) / attempts END WHERE user_id = ? AND difficulty = ?", (percent, percent, percent, test_time, test_time, user_id, difficulty))
         cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
         conn.commit()
-    result_text = f"✅ Результат: {score}/{total_questions} ({percent:.1f}%)\n⏱️ Время: {int(test_time//60)}:{int(test_time%60):02d}\n📊 {DIFFICULTIES[difficulty]['name']}"
+        safe_delete_message(user_id, msg_id)
+    result_text = f"Результат: {score}/{total_questions} ({percent:.1f}%) Время: {int(test_time//60)}:{int(test_time%60):02d} {DIFFICULTIES[difficulty]['name']}"
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("📄 Сертификат", callback_data="certificate"))
-    markup.add(types.InlineKeyboardButton("📈 Статистика", callback_data="show_stats"))
-    markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="start_menu"))
+    markup.add(types.InlineKeyboardButton("Сертификат", callback_data="certificate"))
+    markup.add(types.InlineKeyboardButton("Статистика", callback_data="show_stats"))
+    markup.add(types.InlineKeyboardButton("Главное меню", callback_data="start_menu"))
     bot.send_message(user_id, result_text, reply_markup=markup)
 
 def generate_certificate(user_id):
@@ -221,13 +229,13 @@ def show_user_stats(user_id):
         cursor.execute("SELECT difficulty, attempts, successful, best_score, avg_time FROM stats WHERE user_id=?", (user_id,))
         stats = cursor.fetchall()
     if not stats:
-        bot.send_message(user_id, "📊 Статистика пуста")
+        bot.send_message(user_id, "Статистика пуста")
         return
-    text = "📊 Ваша статистика:\n\n"
+    text = "Ваша статистика:\n\n"
     for diff, attempts, success, score, avg_time in stats:
         rate = f"{success}/{attempts}" if attempts else "0/0"
         time_min = int(avg_time//60) if avg_time else 0
-        text += f"• {DIFFICULTIES[diff]['name']}: {rate} ({score:.0f}%, {time_min}мин)\n"
+        text += f"{DIFFICULTIES[diff]['name']}: {rate} ({score:.0f}%, {time_min}мин)\n"
     bot.send_message(user_id, text)
 
 def handle_test_callback(call):
