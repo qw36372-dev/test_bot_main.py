@@ -111,18 +111,6 @@ def global_message_handler(message):
             return
     show_main_menu(message)
 
-@bot.callback_query_handler(func=lambda call: True)
-def global_callback_handler(call):
-    for filename, module in loaded_bots.items():
-        try:
-            if module and hasattr(module, 'handle_callback') and module.handle_callback(call):
-                bot.answer_callback_query(call.id)
-                return
-        except Exception as e:
-            logger.error(f"Callback error in {filename}: {e}")
-            continue
-    bot.answer_callback_query(call.id, "Неизвестная кнопка")
-
 def handle_specialization(message, specialization_name):
     filename = SPECIALIZATIONS.get(specialization_name)
     if not filename or filename not in loaded_bots or not loaded_bots[filename]:
@@ -137,9 +125,10 @@ def handle_specialization(message, specialization_name):
         logger.error(f"Specialization error {specialization_name}: {e}")
         bot.send_message(message.chat.id, "Ошибка запуска специализации")
 
-@bot.callback_query_handler(func=lambda call: call.data in SPECIALIZATIONS or call.data.startswith('reload_'))
-def specialization_handler(call):
+@bot.callback_query_handler(func=lambda call: True)
+def universal_callback_handler(call):
     data = call.data
+    
     if data.startswith('reload_'):
         spec_name = data[7:]
         filename = SPECIALIZATIONS.get(spec_name)
@@ -148,17 +137,31 @@ def specialization_handler(call):
             loaded_bots[filename] = load_bot_module(full_path)
             bot.answer_callback_query(call.id, f"Модуль {spec_name} перезагружен")
         safe_delete_message(call.message.chat.id, call.message.message_id)
-        return
+        return True
+    
     filename = SPECIALIZATIONS.get(data)
     if filename and filename in loaded_bots and loaded_bots[filename]:
         bot.answer_callback_query(call.id, "Выберите сложность")
         try:
             safe_delete_message(call.message.chat.id, call.message.message_id)
             loaded_bots[filename].show_difficulty_menu(call.from_user.id, call.message.message_id)
-        except:
+            return True
+        except Exception as e:
+            logger.error(f"Menu error {filename}: {e}")
             bot.answer_callback_query(call.id, "Ошибка меню", show_alert=True)
-    else:
-        bot.answer_callback_query(call.id, "Модуль не загружен", show_alert=True)
+            return True
+    
+    for filename, module in loaded_bots.items():
+        try:
+            if module and hasattr(module, 'handle_callback') and module.handle_callback(call):
+                bot.answer_callback_query(call.id)
+                return True
+        except Exception as e:
+            logger.error(f"Callback error in {filename}: {e}")
+            continue
+    
+    bot.answer_callback_query(call.id, "Неизвестная кнопка")
+    return False
 
 def signal_handler(sig, frame):
     logger.info("Shutting down gracefully...")
