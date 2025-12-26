@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BACKGROUND_IMAGE = "background.jpg.png"
+BACKGROUND_IMAGE = "background.jpg"
 
 SPECIALIZATIONS = {
     "ООУПДС": "OUPDS_test_bot.py",
@@ -47,7 +47,7 @@ def load_bot_module(filename):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         if hasattr(module, 'init_test_module'):
-            module.init_test_module()
+            module.init_test_module(bot)
         logger.info(f"Loaded module: {filename}")
         return module
     except Exception as e:
@@ -136,9 +136,9 @@ def universal_callback_handler(call):
         else:
             difficulties = {
                 'rezerv': {'questions': 20, 'time': 35*60, 'name': 'Резерв'},
-                'baza': {'questions': 30, 'time': 30*60, 'name': 'Базовый'},
-                'standard': {'questions': 40, 'time': 20*60, 'name': 'Стандартный'},
-                'expert': {'questions': 50, 'time': 20*60, 'name': 'Эксперт'}
+                'bazovyy': {'questions': 25, 'time': 40*60, 'name': 'Базовый'},
+                'standart': {'questions': 30, 'time': 45*60, 'name': 'Стандартный'},
+                'expert': {'questions': 50, 'time': 90*60, 'name': 'Эксперт'}
             }
         
         markup = types.InlineKeyboardMarkup(row_width=1)
