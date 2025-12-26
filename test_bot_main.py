@@ -69,18 +69,16 @@ def safe_delete_message(chat_id, message_id):
 
 def show_main_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = types.KeyboardButton("ООУПДС")
-    btn2 = types.KeyboardButton("Исполнители")
-    btn3 = types.KeyboardButton("Дознание")
-    btn4 = types.KeyboardButton("Алименты")
-    btn5 = types.KeyboardButton("Розыск")
-    btn6 = types.KeyboardButton("ОПП")
-    btn7 = types.KeyboardButton("ОКО")
-    btn8 = types.KeyboardButton("Информатизация")
-    btn9 = types.KeyboardButton("Кадры")
-    btn10 = types.KeyboardButton("ОСБ")
-    btn11 = types.KeyboardButton("Управление")
-    markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8, btn9, btn10, btn11)
+    buttons = [
+        ["ООУПДС", "Исполнители"],
+        ["Дознание", "Алименты"], 
+        ["Розыск", "ОПП"],
+        ["ОКО", "Информатизация"],
+        ["Кадры", "ОСБ"],
+        ["Управление"]
+    ]
+    for row in buttons:
+        markup.row(*[types.KeyboardButton(name) for name in row])
     bot.send_message(message.chat.id, "Главное меню. Выберите специализацию:", reply_markup=markup)
     safe_delete_message(message.chat.id, message.message_id)
 
