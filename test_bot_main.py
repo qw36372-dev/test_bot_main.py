@@ -138,3 +138,56 @@ def universal_callback_handler(call):
         filename = SPECIALIZATIONS.get(spec_name)
         if filename:
             full_path = os.path.join(os.path.dirname(__file__), filename
+
+            loaded_bots[filename] = load_bot_module(full_path)
+            bot.answer_callback_query(call.id, f"Модуль {spec_name} перезагружен")
+        safe_delete_message(call.message.chat.id, call.message.message_id)
+        return True
+    
+    if call.data in SPECIALIZATIONS:
+        filename = SPECIALIZATIONS[call.data]
+        if filename in loaded_bots and loaded_bots[filename]:
+            bot.answer_callback_query(call.id, "Выберите сложность")
+            safe_delete_message(call.message.chat.id, call.message.message_id)
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for diff_key, info in DIFFICULTIES.items():
+                markup.add(types.InlineKeyboardButton(
+                    f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", 
+                    callback_data=f"{call.data}_{diff_key}_start"
+                ))
+            bot.send_message(call.from_user.id, "Выберите сложность:", reply_markup=markup)
+            return True
+    
+    for filename, module in loaded_bots.items():
+        try:
+            if module and hasattr(module, 'handle_callback') and module.handle_callback(call):
+                bot.answer_callback_query(call.id)
+                return True
+        except Exception as e:
+            logger.error(f"Callback error in {filename}: {e}")
+            continue
+    
+    bot.answer_callback_query(call.id, "Неизвестная кнопка")
+    return False
+
+def signal_handler(sig, frame):
+    logger.info("Shutting down gracefully...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+if __name__ == "__main__":
+    logger.info("Starting test bot...")
+    reload_modules()
+    logger.info("Available modules:")
+    for name, filename in SPECIALIZATIONS.items():
+        full_path = os.path.join(os.path.dirname(__file__), filename)
+        status = "OK" if filename in loaded_bots and loaded_bots[filename] else "MISSING"
+        logger.info(f"  {status} {name}: {filename}")
+    try:
+        bot.infinity_polling(none_stop=True, interval=1, timeout=30)
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot crashed: {e}")
