@@ -33,39 +33,69 @@ def safe_delete_message(chat_id, message_id):
     except:
         pass
 
-def init_test_module():
-    global ql, conn, cursor
+def init_test_module(bot_instance):
+    global ql, conn, cursor, bot
+    bot = bot_instance
     try:
         db_name = f"{os.path.splitext(__file__)[0]}.db"
         ql = QuestionsLibrary(f"{os.path.splitext(__file__)[0]}_questions.json")
         conn = sqlite3.connect(db_name, check_same_thread=False)
         cursor = conn.cursor()
-        cursor.executescript("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, full_name TEXT, position TEXT, department TEXT, first_start INTEGER DEFAULT 1); CREATE TABLE IF NOT EXISTS active_tests (user_id INTEGER PRIMARY KEY, questions TEXT, answers TEXT, start_time REAL, difficulty TEXT, current_question INTEGER DEFAULT 0, message_id INTEGER, test_time REAL DEFAULT 0); CREATE TABLE IF NOT EXISTS stats (user_id INTEGER, difficulty TEXT, attempts INTEGER DEFAULT 0, successful INTEGER DEFAULT 0, best_score REAL DEFAULT 0, avg_time REAL DEFAULT 0, PRIMARY KEY (user_id, difficulty));")
+        cursor.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY, 
+                full_name TEXT, 
+                position TEXT, 
+                department TEXT, 
+                first_start INTEGER DEFAULT 1
+            ); 
+            CREATE TABLE IF NOT EXISTS active_tests (
+                user_id INTEGER PRIMARY KEY, 
+                questions TEXT, 
+                answers TEXT, 
+                start_time REAL, 
+                difficulty TEXT, 
+                current_question INTEGER DEFAULT 0, 
+                message_id INTEGER, 
+                test_time REAL DEFAULT 0
+            ); 
+            CREATE TABLE IF NOT EXISTS stats (
+                user_id INTEGER, 
+                difficulty TEXT, 
+                attempts INTEGER DEFAULT 0, 
+                successful INTEGER DEFAULT 0, 
+                best_score REAL DEFAULT 0, 
+                avg_time REAL DEFAULT 0, 
+                PRIMARY KEY (user_id, difficulty)
+            );
+        """)
         conn.commit()
         print(f"Aliment module OK: {ql.get_questions_count()} questions")
     except Exception as e:
         print(f"Aliment init error: {e}")
         raise
 
-def show_difficulty_menu(user_id, message_id):
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for diff, info in DIFFICULTIES.items():
-        markup.add(types.InlineKeyboardButton(f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", callback_data=f"{diff}_start"))
-    bot.edit_message_text("Выберите сложность:", user_id, message_id, reply_markup=markup)
-
 def start_test(user_id, difficulty):
-    global bot
     current_test_users.add(user_id)
     with db_lock:
         cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
         cursor.execute("SELECT first_start FROM users WHERE user_id=?", (user_id,))
         result = cursor.fetchone()
         if result and result[0] == 0:
-            show_difficulty_menu(user_id, None)  # message_id не нужен
+            show_difficulty_menu(user_id)
         else:
             bot.send_message(user_id, "Введите ФИО:")
             user_states[user_id] = 'full_name'
     conn.commit()
+
+def show_difficulty_menu(user_id):
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for diff, info in DIFFICULTIES.items():
+        markup.add(types.InlineKeyboardButton(
+            f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", 
+            callback_data=f"{diff}_start"
+        ))
+    bot.send_message(user_id, "Выберите сложность:", reply_markup=markup)
 
 def handle_test_text(message):
     user_id = message.from_user.id
@@ -75,15 +105,15 @@ def handle_test_text(message):
     if state == 'full_name':
         cursor.execute("UPDATE users SET full_name=? WHERE user_id=?", (message.text, user_id))
         user_states[user_id] = 'position'
-        bot.reply_to(message, "Должность:")
+        bot.send_message(user_id, "Должность:")
     elif state == 'position':
         cursor.execute("UPDATE users SET position=? WHERE user_id=?", (message.text, user_id))
         user_states[user_id] = 'department'
-        bot.reply_to(message, "Подразделение:")
+        bot.send_message(user_id, "Подразделение:")
     elif state == 'department':
         cursor.execute("UPDATE users SET department=?, first_start=0 WHERE user_id=?", (message.text, user_id))
         conn.commit()
-        show_difficulty_menu(user_id, message.message_id)
+        show_difficulty_menu(user_id)
         del user_states[user_id]
     return True
 
@@ -126,6 +156,8 @@ def show_next_question(user_id, question_index):
             else:
                 msg = bot.send_message(user_id, question_text, reply_markup=markup)
                 cursor.execute("UPDATE active_tests SET message_id=? WHERE user_id=?", (msg.message_id, user_id))
+                conn.commit()
+                return
         except:
             msg = bot.send_message(user_id, question_text, reply_markup=markup)
             cursor.execute("UPDATE active_tests SET message_id=? WHERE user_id=?", (msg.message_id, user_id))
@@ -176,7 +208,14 @@ def finish_test(user_id, timeout=False):
         total_questions = len(questions)
         percent = (score / total_questions) * 100
         cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
-        cursor.execute("UPDATE stats SET attempts = attempts + 1, successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END, avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts - 1) + ?) / attempts END WHERE user_id = ? AND difficulty = ?", (percent, percent, percent, test_time, test_time, user_id, difficulty))
+        cursor.execute("""
+            UPDATE stats SET 
+            attempts = attempts + 1, 
+            successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, 
+            best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END, 
+            avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts - 1) + ?) / attempts END 
+            WHERE user_id = ? AND difficulty = ?
+        """, (percent, percent, percent, test_time, test_time, user_id, difficulty))
         cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
         conn.commit()
         safe_delete_message(user_id, msg_id)
@@ -189,7 +228,11 @@ def finish_test(user_id, timeout=False):
 
 def generate_certificate(user_id):
     with db_lock:
-        cursor.execute("SELECT u.full_name, u.position, u.department, s.best_score, s.difficulty, s.avg_time FROM users u LEFT JOIN stats s ON u.user_id = s.user_id WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1", (user_id,))
+        cursor.execute("""
+            SELECT u.full_name, u.position, u.department, s.best_score, s.difficulty, s.avg_time 
+            FROM users u LEFT JOIN stats s ON u.user_id = s.user_id 
+            WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
+        """, (user_id,))
         data = cursor.fetchone()
     if not data:
         bot.send_message(user_id, "Нет данных для сертификата")
@@ -207,9 +250,9 @@ def generate_certificate(user_id):
         f"ФИО: {data[0] or 'Не указано'}",
         f"Должность: {data[1] or 'Не указано'}",
         f"Подразделение: {data[2] or 'Не указано'}",
-        f"Лучший результат: {data[3]:.0f}%",
-        f"Сложность: {DIFFICULTIES[data[4]]['name']}",
-        f"Среднее время: {int(data[5]//60)} мин"
+        f"Лучший результат: {data[3]:.0f}%" if data[3] else "Лучший результат: Не указан",
+        f"Сложность: {DIFFICULTIES[data[4]]['name']}" if data[4] else "Сложность: Не указана",
+        f"Среднее время: {int(data[5]//60)} мин" if data[5] else "Среднее время: Не указано"
     ]
     for line in info:
         c.drawCentredText(width/2, y, line)
@@ -250,7 +293,11 @@ def handle_test_callback(call):
             questions = ql.get_random_questions(info['questions'])
             start_time = time.time()
             with db_lock:
-                cursor.execute("INSERT OR REPLACE INTO active_tests (user_id, questions, answers, start_time, difficulty, current_question) VALUES (?, ?, '[]', ?, ?, 0)", (user_id, json.dumps(questions), start_time, diff))
+                cursor.execute("""
+                    INSERT OR REPLACE INTO active_tests 
+                    (user_id, questions, answers, start_time, difficulty, current_question) 
+                    VALUES (?, ?, '[]', ?, ?, 0)
+                """, (user_id, json.dumps(questions), start_time, diff))
                 conn.commit()
             timer = threading.Timer(info['time'], lambda: finish_test(user_id, True))
             timer.start_time = start_time
