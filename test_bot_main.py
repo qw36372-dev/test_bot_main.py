@@ -150,11 +150,10 @@ def universal_callback_handler(call):
         bot.send_message(call.from_user.id, "Выберите сложность:", reply_markup=markup)
         return True
     
-    # ✅: Обработка запуска теста {spec}_{difficulty}_start
     if '_' in data and data.endswith('_start'):
         parts = data.rsplit('_', 1)
-        spec_name = parts[0]
-        difficulty = parts[1][:-6]  # убираем "_start"
+        spec_name = parts[0].rsplit('_', 1)[0] if '_' in parts[0] else parts[0]
+        difficulty = parts[1][:-6]
         
         filename = SPECIALIZATIONS.get(spec_name)
         module = loaded_bots.get(filename)
@@ -164,7 +163,6 @@ def universal_callback_handler(call):
             bot.answer_callback_query(call.id, f"Тест {difficulty} запущен")
             return True
     
-    # Модули (вопросы/ответы)
     for filename, module in loaded_bots.items():
         try:
             if module and hasattr(module, 'handle_callback') and module.handle_callback(call):
@@ -175,6 +173,23 @@ def universal_callback_handler(call):
             continue
     
     bot.answer_callback_query(call.id, "Неизвестная кнопка")
+
+def signal_handler(sig, frame):
+    logger.info("Shutting down gracefully...")
+    sys.exit(0)
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    logger.info("Starting test bot...")
+    reload_modules()
+    logger.info("Available modules:")
+    for name, filename in SPECIALIZATIONS.items():
+        status = "✓" if filename in loaded_bots and loaded_bots[filename] else "✗"
+        logger.info(f"  {status} {name}: {filename}")
+    
+    try:
         bot.infinity_polling(none_stop=True, interval=1, timeout=30)
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
