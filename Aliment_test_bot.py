@@ -53,17 +53,15 @@ def show_difficulty_menu(user_id, message_id):
         markup.add(types.InlineKeyboardButton(f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", callback_data=f"{diff}_start"))
     bot.edit_message_text("Выберите сложность:", user_id, message_id, reply_markup=markup)
 
-def start_test(bot_instance, call):
+def start_test(user_id, difficulty):
     global bot
-    bot = bot_instance
-    user_id = call.from_user.id
     current_test_users.add(user_id)
     with db_lock:
         cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
         cursor.execute("SELECT first_start FROM users WHERE user_id=?", (user_id,))
         result = cursor.fetchone()
         if result and result[0] == 0:
-            show_difficulty_menu(user_id, call.message.message_id)
+            show_difficulty_menu(user_id, None)  # message_id не нужен
         else:
             bot.send_message(user_id, "Введите ФИО:")
             user_states[user_id] = 'full_name'
