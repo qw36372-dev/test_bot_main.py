@@ -132,7 +132,9 @@ def show_next_question(user_id, question_index):
         questions = json.loads(result[0])
         if question_index >= len(questions):
             finish_test(user_id)
+            conn.commit()
             return
+        
         q = questions[question_index]
         cursor.execute("SELECT answers FROM active_tests WHERE user_id=?", (user_id,))
         result = cursor.fetchone()
@@ -140,14 +142,19 @@ def show_next_question(user_id, question_index):
         while len(answers) <= question_index:
             answers.append([])
         selected = [idx+1 for idx in answers[question_index]]
+        
         markup = types.InlineKeyboardMarkup(row_width=2)
         for i, option in enumerate(q['options']):
             status = "X" if i in answers[question_index] else str(i+1)
             markup.add(types.InlineKeyboardButton(f"{status} {option}", callback_data=f"answer_{question_index}_{i}"))
-        if selected:
-            markup.add(types.InlineKeyboardButton("Далее", callback_data=f"next_{question_index}"))
+        
+        if selected or question_index == len(questions) - 1:
+            btn_text = "✅ Завершить тест" if question_index == len(questions) - 1 else "➡️ Далее"
+            markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"next_{question_index}"))
+        
         remain_time = get_remaining_time(user_id)
         question_text = f"{int(remain_time)}с {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
+        
         cursor.execute("SELECT message_id FROM active_tests WHERE user_id=?", (user_id,))
         msg_result = cursor.fetchone()
         try:
@@ -156,11 +163,10 @@ def show_next_question(user_id, question_index):
             else:
                 msg = bot.send_message(user_id, question_text, reply_markup=markup)
                 cursor.execute("UPDATE active_tests SET message_id=? WHERE user_id=?", (msg.message_id, user_id))
-                conn.commit()
-                return
         except:
             msg = bot.send_message(user_id, question_text, reply_markup=markup)
             cursor.execute("UPDATE active_tests SET message_id=? WHERE user_id=?", (msg.message_id, user_id))
+        
         cursor.execute("UPDATE active_tests SET current_question=? WHERE user_id=?", (question_index, user_id))
         conn.commit()
 
@@ -305,13 +311,16 @@ def handle_test_callback(call):
             timer.start()
             show_next_question(user_id, 0)
             return True
+        
         elif data.startswith('answer_'):
             handle_answer(call)
             return True
+            
         elif data.startswith('next_'):
             question_idx = int(data.split('_')[1])
             show_next_question(user_id, question_idx + 1)
             return True
+            
         elif data == 'certificate':
             generate_certificate(user_id)
             return True
@@ -324,6 +333,7 @@ def handle_test_callback(call):
             return False
     except Exception as e:
         print(f"Aliment callback error: {e}")
+        bot.answer_callback_query(call.id, "Ошибка обработки")
     return False
 
 def handle_message(message):
