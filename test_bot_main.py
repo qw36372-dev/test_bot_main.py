@@ -39,6 +39,13 @@ SPECIALIZATIONS = {
     "Управление": "Starshie_test_bot.py"
 }
 
+DIFFICULTIES = {
+    'rezerv': {'questions': 20, 'time': 35*60, 'name': 'Резерв'},
+    'baza': {'questions': 30, 'time': 30*60, 'name': 'Базовый'},
+    'standard': {'questions': 40, 'time': 20*60, 'name': 'Стандартный'},
+    'expert': {'questions': 50, 'time': 20*60, 'name': 'Эксперт'}
+}
+
 def load_bot_module(filename):
     try:
         spec = importlib.util.spec_from_file_location(filename[:-3], filename)
@@ -46,7 +53,7 @@ def load_bot_module(filename):
         spec.loader.exec_module(module)
         if hasattr(module, 'init_test_module'):
             module.init_test_module()
-        logger.info(f"Loaded module: {filename} ({getattr(module, 'ql', 'N/A').get_questions_count() if hasattr(module, 'ql') and hasattr(getattr(module, 'ql', None), 'get_questions_count') else 'N/A'} questions)")
+        logger.info(f"Loaded module: {filename}")
         return module
     except Exception as e:
         logger.error(f"Failed to load {filename}: {e}")
@@ -84,15 +91,7 @@ def show_main_menu(message):
     btn10 = types.KeyboardButton("ОСБ")
     btn11 = types.KeyboardButton("Управление")
     markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8, btn9, btn10, btn11)
-    if message.reply_to_message:
-        bot.send_message(
-            message.chat.id, 
-            "Главное меню. Выберите специализацию:", 
-            reply_to_message_id=message.reply_to_message.message_id,
-            reply_markup=markup
-        )
-    else:
-        bot.send_message(message.chat.id, "Главное меню. Выберите специализацию:", reply_markup=markup)
+    bot.send_message(message.chat.id, "Главное меню. Выберите специализацию:", reply_markup=markup)
     safe_delete_message(message.chat.id, message.message_id)
 
 @bot.message_handler(commands=['start'])
@@ -116,14 +115,19 @@ def handle_specialization(message, specialization_name):
     if not filename or filename not in loaded_bots or not loaded_bots[filename]:
         bot.send_message(message.chat.id, f"Модуль {specialization_name} не загружен. Проверьте логи.")
         return
-    try:
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Запустить тест", callback_data=specialization_name))
-        markup.add(types.InlineKeyboardButton("Перезагрузить модуль", callback_data=f"reload_{specialization_name}"))
-        bot.send_message(message.chat.id, f"Специализация: {specialization_name}", reply_markup=markup)
-    except Exception as e:
-        logger.error(f"Specialization error {specialization_name}: {e}")
-        bot.send_message(message.chat.id, "Ошибка запуска специализации")
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Запустить тест", callback_data=specialization_name))
+    markup.add(types.InlineKeyboardButton("Перезагрузить модуль", callback_data=f"reload_{specialization_name}"))
+    bot.send_message(message.chat.id, f"Специализация: {specialization_name}", reply_markup=markup)
+
+def show_difficulty_menu(user_id):
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for diff_key, info in DIFFICULTIES.items():
+        markup.add(types.InlineKeyboardButton(
+            f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", 
+            callback_data=f"{diff_key}_start_{list(SPECIALIZATIONS.keys()).index(next(name for name, f in SPECIALIZATIONS.items() if f == list(loaded_bots.keys())[list(loaded_bots.values()).index(next(module for module in loaded_bots.values() if hasattr(module, 'DIFFICULTIES') and diff_key in module.DIFFicultIES)])}"
+        ))
+    bot.send_message(user_id, "Выберите сложность:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def universal_callback_handler(call):
@@ -133,54 +137,4 @@ def universal_callback_handler(call):
         spec_name = data[7:]
         filename = SPECIALIZATIONS.get(spec_name)
         if filename:
-            full_path = os.path.join(os.path.dirname(__file__), filename)
-            loaded_bots[filename] = load_bot_module(full_path)
-            bot.answer_callback_query(call.id, f"Модуль {spec_name} перезагружен")
-        safe_delete_message(call.message.chat.id, call.message.message_id)
-        return True
-    
-    filename = SPECIALIZATIONS.get(data)
-    if filename and filename in loaded_bots and loaded_bots[filename]:
-        bot.answer_callback_query(call.id, "Выберите сложность")
-        try:
-            safe_delete_message(call.message.chat.id, call.message.message_id)
-            loaded_bots[filename].show_difficulty_menu(call.from_user.id, call.message.message_id)
-            return True
-        except Exception as e:
-            logger.error(f"Menu error {filename}: {e}")
-            bot.answer_callback_query(call.id, "Ошибка меню", show_alert=True)
-            return True
-    
-    for filename, module in loaded_bots.items():
-        try:
-            if module and hasattr(module, 'handle_callback') and module.handle_callback(call):
-                bot.answer_callback_query(call.id)
-                return True
-        except Exception as e:
-            logger.error(f"Callback error in {filename}: {e}")
-            continue
-    
-    bot.answer_callback_query(call.id, "Неизвестная кнопка")
-    return False
-
-def signal_handler(sig, frame):
-    logger.info("Shutting down gracefully...")
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-if __name__ == "__main__":
-    logger.info("Starting test bot...")
-    reload_modules()
-    logger.info("Available modules:")
-    for name, filename in SPECIALIZATIONS.items():
-        full_path = os.path.join(os.path.dirname(__file__), filename)
-        status = "OK" if filename in loaded_bots and loaded_bots[filename] else "MISSING"
-        logger.info(f"  {status} {name}: {filename}")
-    try:
-        bot.infinity_polling(none_stop=True, interval=1, timeout=30)
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception as e:
-        logger.error(f"Bot crashed: {e}")
+            full_path = os.path.join(os.path.dirname(__file__), filename
