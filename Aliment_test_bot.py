@@ -33,9 +33,8 @@ def safe_delete_message(chat_id, message_id):
     except:
         pass
 
-def init_test_module(bot_instance):
+def init_test_module(bot_instance=None):
     global ql, conn, cursor, bot
-    bot = bot_instance
     try:
         db_name = f"{os.path.splitext(__file__)[0]}.db"
         ql = QuestionsLibrary(f"{os.path.splitext(__file__)[0]}_questions.json")
