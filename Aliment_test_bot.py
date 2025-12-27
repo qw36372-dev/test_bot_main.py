@@ -131,8 +131,10 @@ def show_next_question(user_id, question_index):
             return
         questions = json.loads(result[0])
         if question_index >= len(questions):
-            finish_test(user_id)
-            conn.commit()
+            cursor.execute("SELECT difficulty FROM active_tests WHERE user_id=?", (user_id,))
+            if cursor.fetchone():
+                finish_test(user_id)
+                conn.commit()
             return
         
         q = questions[question_index]
@@ -149,11 +151,13 @@ def show_next_question(user_id, question_index):
             markup.add(types.InlineKeyboardButton(f"{status} {option}", callback_data=f"answer_{question_index}_{i}"))
         
         if selected or question_index == len(questions) - 1:
-            btn_text = "✅ Завершить тест" if question_index == len(questions) - 1 else "➡️ Далее"
+            btn_text = "Завершить тест" if question_index == len(questions) - 1 else "Далее"
             markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"next_{question_index}"))
         
         remain_time = get_remaining_time(user_id)
-        question_text = f"{int(remain_time)}с {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
+        minutes_left = max(0, int(remain_time / 60))
+        seconds_left = int(remain_time % 60)
+        question_text = f"{minutes_left}:{seconds_left:02d} {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
         
         cursor.execute("SELECT message_id FROM active_tests WHERE user_id=?", (user_id,))
         msg_result = cursor.fetchone()
@@ -208,7 +212,7 @@ def finish_test(user_id, timeout=False):
             print(f"DEBUG: DB result: {result}")
             
             if not result:
-                bot.send_message(user_id, "❌ Нет данных теста")
+                bot.send_message(user_id, "Нет данных теста")
                 print(f"DEBUG: No test data for {user_id}")
                 return
                 
@@ -247,11 +251,11 @@ def finish_test(user_id, timeout=False):
             if msg_id:
                 safe_delete_message(user_id, msg_id)
         
-        result_text = f"✅ Результат: {score}/{total_questions} ({percent:.1f}%) \n⏱️ Время: {int(test_time//60)}:{int(test_time%60):02d} \n{DIFFICULTIES[difficulty]['name']}"
+        result_text = f"Результат: {score}/{total_questions} ({percent:.1f}%) Время: {int(test_time//60)}:{int(test_time%60):02d} {DIFFICULTIES[difficulty]['name']}"
         markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("📄 Сертификат", callback_data="certificate"))
-        markup.add(types.InlineKeyboardButton("📊 Статистика", callback_data="show_stats"))
-        markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="start_menu"))
+        markup.add(types.InlineKeyboardButton("Сертификат", callback_data="certificate"))
+        markup.add(types.InlineKeyboardButton("Статистика", callback_data="show_stats"))
+        markup.add(types.InlineKeyboardButton("Главное меню", callback_data="start_menu"))
         
         bot.send_message(user_id, result_text, reply_markup=markup)
         print(f"DEBUG: finish_test({user_id}) SUCCESS")
@@ -259,7 +263,7 @@ def finish_test(user_id, timeout=False):
         
     except Exception as e:
         print(f"CRITICAL ERROR in finish_test({user_id}): {e}")
-        bot.send_message(user_id, f"❌ Ошибка завершения: {str(e)}")
+        bot.send_message(user_id, f"Ошибка завершения: {str(e)}")
 
 def generate_certificate(user_id):
     with db_lock:
@@ -269,7 +273,7 @@ def generate_certificate(user_id):
             WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
         """, (user_id,))
         data = cursor.fetchone()
-    if not data:
+    if not 
         bot.send_message(user_id, "Нет данных для сертификата")
         return
     filename = f"cert_{user_id}_{int(time.time())}.pdf"
@@ -317,8 +321,12 @@ def show_user_stats(user_id):
 def handle_test_callback(call):
     data = call.data
     user_id = call.from_user.id
+    print(f"DEBUG: handle_test_callback({user_id}): '{data}'")
+    
     if user_id not in current_test_users and not data.endswith('_start'):
+        print(f"DEBUG: user {user_id} not in test")
         return False
+        
     try:
         if data.endswith('_start'):
             diff = data.split('_')[0]
@@ -342,28 +350,33 @@ def handle_test_callback(call):
             return True
         
         elif data.startswith('answer_'):
+            print(f"DEBUG: answer clicked")
             handle_answer(call)
             return True
             
         elif data.startswith('next_'):
             question_idx = int(data.split('_')[1])
+            print(f"DEBUG: next_ {question_idx} -> {question_idx+1}")
             show_next_question(user_id, question_idx + 1)
             return True
             
         elif data == 'certificate':
+            print(f"DEBUG: certificate")
             generate_certificate(user_id)
             return True
         elif data == 'show_stats':
+            print(f"DEBUG: show_stats")
             show_user_stats(user_id)
             return True
         elif data == 'start_menu':
+            print(f"DEBUG: start_menu")
             finish_test(user_id)
             current_test_users.discard(user_id)
             return False
     except Exception as e:
-        print(f"Aliment callback error: {e}")
-        bot.answer_callback_query(call.id, "Ошибка обработки")
-    return False
+        print(f"CRITICAL: handle_test_callback({user_id}, '{data}'): {e}")
+        bot.answer_callback_query(call.id, f"Ошибка: {str(e)[:50]}")
+        return False
 
 def handle_message(message):
     return handle_test_text(message)
