@@ -190,47 +190,76 @@ def handle_answer(call):
     show_next_question(user_id, question_idx)
 
 def finish_test(user_id, timeout=False):
+    print(f"DEBUG: finish_test({user_id}, timeout={timeout}) START")
+    
     if user_id in active_timers:
         active_timers[user_id].cancel()
         del active_timers[user_id]
+        print(f"DEBUG: timer cancelled for {user_id}")
+    
     if user_id not in current_test_users:
+        print(f"DEBUG: user {user_id} not in current_test_users")
         return
-    with db_lock:
-        cursor.execute("SELECT questions, answers, start_time, difficulty, message_id FROM active_tests WHERE user_id=?", (user_id,))
-        result = cursor.fetchone()
-        if not result:
-            bot.send_message(user_id, "Нет данных теста")
-            return
-        questions = json.loads(result[0])
-        user_answers = json.loads(result[1])
-        start_time = result[2]
-        difficulty = result[3]
-        msg_id = result[4]
-        test_time = time.time() - start_time
-        score = 0
-        for i, q in enumerate(questions):
-            if len(user_answers) > i and set(user_answers[i]) == set(q['correct']):
-                score += 1
-        total_questions = len(questions)
-        percent = (score / total_questions) * 100
-        cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
-        cursor.execute("""
-            UPDATE stats SET 
-            attempts = attempts + 1, 
-            successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, 
-            best_score = CASE WHEN ? > best_score THEN ? ELSE best_score END, 
-            avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts - 1) + ?) / attempts END 
-            WHERE user_id = ? AND difficulty = ?
-        """, (percent, percent, percent, test_time, test_time, user_id, difficulty))
-        cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
-        conn.commit()
-        safe_delete_message(user_id, msg_id)
-    result_text = f"Результат: {score}/{total_questions} ({percent:.1f}%) Время: {int(test_time//60)}:{int(test_time%60):02d} {DIFFICULTIES[difficulty]['name']}"
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(types.InlineKeyboardButton("Сертификат", callback_data="certificate"))
-    markup.add(types.InlineKeyboardButton("Статистика", callback_data="show_stats"))
-    markup.add(types.InlineKeyboardButton("Главное меню", callback_data="start_menu"))
-    bot.send_message(user_id, result_text, reply_markup=markup)
+    
+    try:
+        with db_lock:
+            cursor.execute("SELECT questions, answers, start_time, difficulty, message_id FROM active_tests WHERE user_id=?", (user_id,))
+            result = cursor.fetchone()
+            print(f"DEBUG: DB result: {result}")
+            
+            if not result:
+                bot.send_message(user_id, "❌ Нет данных теста")
+                print(f"DEBUG: No test data for {user_id}")
+                return
+                
+            questions = json.loads(result[0])
+            user_answers = json.loads(result[1] or '[]')
+            start_time = result[2]
+            difficulty = result[3]
+            msg_id = result[4]
+            
+            print(f"DEBUG: questions={len(questions)}, answers={len(user_answers)}")
+            
+            test_time = time.time() - start_time
+            score = 0
+            for i, q in enumerate(questions):
+                if len(user_answers) > i and set(user_answers[i]) == set(q['correct']):
+                    score += 1
+            
+            total_questions = len(questions)
+            percent = (score / total_questions) * 100
+            
+            print(f"DEBUG: score={score}/{total_questions} ({percent:.1f}%)")
+            
+            cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
+            cursor.execute("""
+                UPDATE stats SET 
+                attempts = attempts + 1, 
+                successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, 
+                best_score = CASE WHEN ? > best_score OR best_score IS NULL THEN ? ELSE best_score END, 
+                avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts) + ?) / (attempts + 1) END 
+                WHERE user_id = ? AND difficulty = ?
+            """, (percent, percent, percent, test_time, test_time, user_id, difficulty))
+            
+            cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
+            conn.commit()
+            
+            if msg_id:
+                safe_delete_message(user_id, msg_id)
+        
+        result_text = f"✅ Результат: {score}/{total_questions} ({percent:.1f}%) \n⏱️ Время: {int(test_time//60)}:{int(test_time%60):02d} \n{DIFFICULTIES[difficulty]['name']}"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("📄 Сертификат", callback_data="certificate"))
+        markup.add(types.InlineKeyboardButton("📊 Статистика", callback_data="show_stats"))
+        markup.add(types.InlineKeyboardButton("🏠 Главное меню", callback_data="start_menu"))
+        
+        bot.send_message(user_id, result_text, reply_markup=markup)
+        print(f"DEBUG: finish_test({user_id}) SUCCESS")
+        current_test_users.discard(user_id)
+        
+    except Exception as e:
+        print(f"CRITICAL ERROR in finish_test({user_id}): {e}")
+        bot.send_message(user_id, f"❌ Ошибка завершения: {str(e)}")
 
 def generate_certificate(user_id):
     with db_lock:
