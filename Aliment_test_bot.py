@@ -132,8 +132,6 @@ def show_next_question(user_id, question_index):
         
         questions = json.loads(result[0])
         if question_index >= len(questions):
-            finish_test(user_id)
-            conn.commit()
             return
         
         q = questions[question_index]
@@ -257,7 +255,7 @@ def generate_certificate(user_id):
             WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
         """, (user_id,))
         data = cursor.fetchone()
-    if not data:
+    if not 
         bot.send_message(user_id, "Нет данных для сертификата")
         return
     filename = f"cert_{user_id}_{int(time.time())}.pdf"
@@ -305,15 +303,12 @@ def show_user_stats(user_id):
 def handle_test_callback(call):
     data = call.data
     user_id = call.from_user.id
-    bot.send_message(user_id, f"DEBUG: callback='{data}'")
     
     if user_id not in current_test_users and not data.endswith('_start'):
-        bot.send_message(user_id, f"DEBUG: not in test")
         return False
         
     try:
         if data.endswith('_start'):
-            bot.send_message(user_id, f"DEBUG: start {data}")
             diff = data.split('_')[0]
             if diff not in DIFFICULTIES:
                 return False
@@ -335,31 +330,35 @@ def handle_test_callback(call):
             return True
         
         elif data.startswith('answer_'):
-            bot.send_message(user_id, f"DEBUG: answer {data}")
             handle_answer(call)
             return True
             
         elif data.startswith('next_'):
             question_idx = int(data.split('_')[1])
-            bot.send_message(user_id, f"DEBUG: next {question_idx}")
+            with db_lock:
+                cursor.execute("SELECT questions FROM active_tests WHERE user_id=?", (user_id,))
+                result = cursor.fetchone()
+                if result:
+                    questions = json.loads(result[0])
+                    if question_idx + 1 >= len(questions):
+                        finish_test(user_id)
+                        bot.answer_callback_query(call.id, "Тест завершен!")
+                        return True
             show_next_question(user_id, question_idx + 1)
             return True
             
         elif data == 'certificate':
-            bot.send_message(user_id, "DEBUG: certificate")
             generate_certificate(user_id)
             return True
         elif data == 'show_stats':
-            bot.send_message(user_id, "DEBUG: stats")
             show_user_stats(user_id)
             return True
         elif data == 'start_menu':
-            bot.send_message(user_id, "DEBUG: menu")
             finish_test(user_id)
             current_test_users.discard(user_id)
             return False
     except Exception as e:
-        bot.send_message(user_id, f"DEBUG ERROR: {str(e)[:100]}")
+        bot.answer_callback_query(call.id, f"Ошибка: {str(e)[:50]}")
         return False
 
 def handle_message(message):
