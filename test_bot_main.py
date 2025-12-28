@@ -1,3 +1,4 @@
+# 100% ready
 import os
 import time
 import logging
