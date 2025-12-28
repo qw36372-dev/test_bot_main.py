@@ -1,4 +1,3 @@
-# Aliment_test_bot.py - 100% PRODUCTION READY
 import sqlite3
 import json
 import threading
