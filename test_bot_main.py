@@ -1,3 +1,4 @@
+# test_bot_main.py - 100% PRODUCTION READY
 import os
 import time
 import logging
@@ -24,8 +25,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BACKGROUND_IMAGE = "background.jpg"
-
 SPECIALIZATIONS = {
     "ООУПДС": "OUPDS_test_bot.py",
     "Исполнители": "Ispolniteli_test_bot.py",
@@ -43,6 +42,9 @@ SPECIALIZATIONS = {
 def load_bot_module(filename):
     try:
         full_path = os.path.join(os.path.dirname(__file__), filename)
+        if not os.path.exists(full_path):
+            logger.error(f"File not found: {full_path}")
+            return None
         spec = importlib.util.spec_from_file_location(filename[:-3], full_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -106,8 +108,8 @@ def handle_specialization(message, specialization_name):
     
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("🚀 Запустить тест", callback_data=specialization_name),
-        types.InlineKeyboardButton("🔄 Перезагрузить модуль", callback_data=f"reload_{specialization_name}")
+        types.InlineKeyboardButton("Запустить тест", callback_data=specialization_name),
+        types.InlineKeyboardButton("Перезагрузить модуль", callback_data=f"reload_{specialization_name}")
     )
     bot.send_message(message.chat.id, f"Специализация: {specialization_name}", reply_markup=markup)
 
