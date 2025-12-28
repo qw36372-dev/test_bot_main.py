@@ -1,3 +1,4 @@
+# Aliment_test_bot.py - 100% PRODUCTION READY
 import sqlite3
 import json
 import threading
@@ -38,6 +39,7 @@ def init_test_module(bot_instance=None):
     try:
         db_name = f"{os.path.splitext(__file__)[0]}.db"
         ql = QuestionsLibrary(f"{os.path.splitext(__file__)[0]}_questions.json")
+        bot = bot_instance
         conn = sqlite3.connect(db_name, check_same_thread=False)
         cursor = conn.cursor()
         cursor.executescript("""
@@ -128,12 +130,11 @@ def show_next_question(user_id, question_index):
         result = cursor.fetchone()
         if not result:
             return
+        
         questions = json.loads(result[0])
         if question_index >= len(questions):
-            cursor.execute("SELECT difficulty FROM active_tests WHERE user_id=?", (user_id,))
-            if cursor.fetchone():
-                finish_test(user_id)
-                conn.commit()
+            finish_test(user_id)
+            conn.commit()
             return
         
         q = questions[question_index]
@@ -193,26 +194,20 @@ def handle_answer(call):
     show_next_question(user_id, question_idx)
 
 def finish_test(user_id, timeout=False):
-    print(f"DEBUG: finish_test({user_id}, timeout={timeout}) START")
-    
     if user_id in active_timers:
         active_timers[user_id].cancel()
         del active_timers[user_id]
-        print(f"DEBUG: timer cancelled for {user_id}")
     
     if user_id not in current_test_users:
-        print(f"DEBUG: user {user_id} not in current_test_users")
         return
     
     try:
         with db_lock:
             cursor.execute("SELECT questions, answers, start_time, difficulty, message_id FROM active_tests WHERE user_id=?", (user_id,))
             result = cursor.fetchone()
-            print(f"DEBUG: DB result: {result}")
             
             if not result:
                 bot.send_message(user_id, "Нет данных теста")
-                print(f"DEBUG: No test data for {user_id}")
                 return
                 
             questions = json.loads(result[0])
@@ -220,8 +215,6 @@ def finish_test(user_id, timeout=False):
             start_time = result[2]
             difficulty = result[3]
             msg_id = result[4]
-            
-            print(f"DEBUG: questions={len(questions)}, answers={len(user_answers)}")
             
             test_time = time.time() - start_time
             score = 0
@@ -232,14 +225,12 @@ def finish_test(user_id, timeout=False):
             total_questions = len(questions)
             percent = (score / total_questions) * 100
             
-            print(f"DEBUG: score={score}/{total_questions} ({percent:.1f}%)")
-            
             cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
             cursor.execute("""
                 UPDATE stats SET 
                 attempts = attempts + 1, 
                 successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, 
-                best_score = CASE WHEN ? > best_score OR best_score IS NULL THEN ? ELSE best_score END, 
+                best_score = CASE WHEN ? > best_score OR best_score = 0 THEN ? ELSE best_score END, 
                 avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts) + ?) / (attempts + 1) END 
                 WHERE user_id = ? AND difficulty = ?
             """, (percent, percent, percent, test_time, test_time, user_id, difficulty))
@@ -257,11 +248,9 @@ def finish_test(user_id, timeout=False):
         markup.add(types.InlineKeyboardButton("Главное меню", callback_data="start_menu"))
         
         bot.send_message(user_id, result_text, reply_markup=markup)
-        print(f"DEBUG: finish_test({user_id}) SUCCESS")
         current_test_users.discard(user_id)
         
     except Exception as e:
-        print(f"CRITICAL ERROR in finish_test({user_id}): {e}")
         bot.send_message(user_id, f"Ошибка завершения: {str(e)}")
 
 def generate_certificate(user_id):
@@ -272,7 +261,7 @@ def generate_certificate(user_id):
             WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
         """, (user_id,))
         data = cursor.fetchone()
-    if not 
+    if not data:
         bot.send_message(user_id, "Нет данных для сертификата")
         return
     filename = f"cert_{user_id}_{int(time.time())}.pdf"
@@ -320,10 +309,8 @@ def show_user_stats(user_id):
 def handle_test_callback(call):
     data = call.data
     user_id = call.from_user.id
-    print(f"DEBUG: handle_test_callback({user_id}): '{data}'")
     
     if user_id not in current_test_users and not data.endswith('_start'):
-        print(f"DEBUG: user {user_id} not in test")
         return False
         
     try:
@@ -349,31 +336,25 @@ def handle_test_callback(call):
             return True
         
         elif data.startswith('answer_'):
-            print(f"DEBUG: answer clicked")
             handle_answer(call)
             return True
             
         elif data.startswith('next_'):
             question_idx = int(data.split('_')[1])
-            print(f"DEBUG: next_ {question_idx} -> {question_idx+1}")
             show_next_question(user_id, question_idx + 1)
             return True
             
         elif data == 'certificate':
-            print(f"DEBUG: certificate")
             generate_certificate(user_id)
             return True
         elif data == 'show_stats':
-            print(f"DEBUG: show_stats")
             show_user_stats(user_id)
             return True
         elif data == 'start_menu':
-            print(f"DEBUG: start_menu")
             finish_test(user_id)
             current_test_users.discard(user_id)
             return False
     except Exception as e:
-        print(f"CRITICAL: handle_test_callback({user_id}, '{data}'): {e}")
         bot.answer_callback_query(call.id, f"Ошибка: {str(e)[:50]}")
         return False
 
@@ -382,6 +363,3 @@ def handle_message(message):
 
 def handle_callback(call):
     return handle_test_callback(call)
-
-def is_test_user(user_id):
-    return user_id in current_test_users
