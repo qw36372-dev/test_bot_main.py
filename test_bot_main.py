@@ -1,4 +1,3 @@
-# test_bot_main.py - 100% PRODUCTION READY
 import os
 import time
 import logging
