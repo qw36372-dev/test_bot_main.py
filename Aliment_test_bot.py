@@ -193,20 +193,25 @@ def handle_answer(call):
     show_next_question(user_id, question_idx)
 
 def finish_test(user_id, timeout=False):
+    bot.send_message(user_id, f"DEBUG: finish_test START")
+    
     if user_id in active_timers:
         active_timers[user_id].cancel()
         del active_timers[user_id]
+        bot.send_message(user_id, "DEBUG: timer cancelled")
     
     if user_id not in current_test_users:
+        bot.send_message(user_id, "DEBUG: not in test_users")
         return
     
     try:
         with db_lock:
             cursor.execute("SELECT questions, answers, start_time, difficulty, message_id FROM active_tests WHERE user_id=?", (user_id,))
             result = cursor.fetchone()
+            bot.send_message(user_id, f"DEBUG: DB result: {result is not None}")
             
             if not result:
-                bot.send_message(user_id, "Нет данных теста")
+                bot.send_message(user_id, "DEBUG: no test data")
                 return
                 
             questions = json.loads(result[0])
@@ -214,6 +219,7 @@ def finish_test(user_id, timeout=False):
             start_time = result[2]
             difficulty = result[3]
             msg_id = result[4]
+            bot.send_message(user_id, f"DEBUG: q={len(questions)}, a={len(user_answers)}")
             
             test_time = time.time() - start_time
             score = 0
@@ -223,6 +229,7 @@ def finish_test(user_id, timeout=False):
             
             total_questions = len(questions)
             percent = (score / total_questions) * 100
+            bot.send_message(user_id, f"DEBUG: score={score}/{total_questions} ({percent:.1f}%)")
             
             cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
             cursor.execute("""
@@ -247,10 +254,11 @@ def finish_test(user_id, timeout=False):
         markup.add(types.InlineKeyboardButton("Главное меню", callback_data="start_menu"))
         
         bot.send_message(user_id, result_text, reply_markup=markup)
+        bot.send_message(user_id, "DEBUG: finish_test SUCCESS")
         current_test_users.discard(user_id)
         
     except Exception as e:
-        bot.send_message(user_id, f"Ошибка завершения: {str(e)}")
+        bot.send_message(user_id, f"DEBUG ERROR finish_test: {str(e)}")
 
 def generate_certificate(user_id):
     with db_lock:
@@ -308,12 +316,15 @@ def show_user_stats(user_id):
 def handle_test_callback(call):
     data = call.data
     user_id = call.from_user.id
+    bot.send_message(user_id, f"DEBUG: callback='{data}'")
     
     if user_id not in current_test_users and not data.endswith('_start'):
+        bot.send_message(user_id, f"DEBUG: not in test")
         return False
         
     try:
         if data.endswith('_start'):
+            bot.send_message(user_id, f"DEBUG: start {data}")
             diff = data.split('_')[0]
             if diff not in DIFFICULTIES:
                 return False
@@ -335,26 +346,31 @@ def handle_test_callback(call):
             return True
         
         elif data.startswith('answer_'):
+            bot.send_message(user_id, f"DEBUG: answer {data}")
             handle_answer(call)
             return True
             
         elif data.startswith('next_'):
             question_idx = int(data.split('_')[1])
+            bot.send_message(user_id, f"DEBUG: next {question_idx}")
             show_next_question(user_id, question_idx + 1)
             return True
             
         elif data == 'certificate':
+            bot.send_message(user_id, "DEBUG: certificate")
             generate_certificate(user_id)
             return True
         elif data == 'show_stats':
+            bot.send_message(user_id, "DEBUG: stats")
             show_user_stats(user_id)
             return True
         elif data == 'start_menu':
+            bot.send_message(user_id, "DEBUG: menu")
             finish_test(user_id)
             current_test_users.discard(user_id)
             return False
     except Exception as e:
-        bot.answer_callback_query(call.id, f"Ошибка: {str(e)[:50]}")
+        bot.send_message(user_id, f"DEBUG ERROR: {str(e)[:100]}")
         return False
 
 def handle_message(message):
