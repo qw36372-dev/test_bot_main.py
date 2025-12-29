@@ -1,190 +1,485 @@
+# test_bot_main.py
 import os
+import sys
 import time
 import logging
 import importlib.util
+import sqlite3
+from pathlib import Path
 import telebot
 from telebot import types
-import signal
-import sys
-import sqlite3
+from threading import Lock
+import json
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 API_TOKEN = os.environ.get("API_TOKEN")
 if not API_TOKEN:
-    raise ValueError("API_TOKEN not found")
+    logger.error("API_TOKEN not set")
+    sys.exit(1)
 
 bot = telebot.TeleBot(API_TOKEN)
-user_data = {}
-test_modules = {}
+db_lock = Lock()
+modules = {}
+user_states = {}
+active_tests = {}
 
-class States:
-    START = 0
-    REG_FIO = 1
-    REG_POSITION = 2
-    REG_DEPARTMENT = 3
-    SPECIALIZATION = 4
-    DIFFICULTY = 5
-    TESTING = 6
-
-def load_test_modules():
-    for filename in os.listdir('.'):
-        if filename.endswith("_test_bot.py"):
-            module_name = filename[:-3]
-            spec = importlib.util.spec_from_file_location(module_name, filename)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            test_modules[module_name] = module
-            logging.info(f"Loaded {module_name}")
+DB_PATH = "test_bot.db"
 
 def init_db():
-    conn = sqlite3.connect('users.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (user_id INTEGER PRIMARY KEY, fio TEXT, position TEXT, department TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS results 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
-                  specialization TEXT, difficulty TEXT, score INTEGER, time_taken REAL)''')
-    conn.commit()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                full_name TEXT,
+                position TEXT,
+                department TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS test_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                module_name TEXT,
+                score INTEGER,
+                total_questions INTEGER,
+                time_spent REAL,
+                completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_progress (
+                user_id INTEGER PRIMARY KEY,
+                module_name TEXT,
+                current_question INTEGER DEFAULT 0,
+                start_time REAL,
+                answers TEXT DEFAULT '{}',
+                difficulty TEXT DEFAULT '',
+                questions TEXT DEFAULT '[]',
+                UNIQUE(user_id, module_name)
+            )
+        ''')
+        conn.commit()
+        conn.close()
 
-def safe_edit(chat_id, message_id, text, reply_markup=None):
-    try:
-        bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
-                            text=text, reply_markup=reply_markup, parse_mode=None)
-        return True
-    except Exception as e:
-        if "message is not modified" in str(e).lower() or "message to edit not found" in str(e).lower():
-            return True
-        logging.error(f"Edit error: {e}")
-        return False
+def load_modules():
+    global modules
+    modules_dir = Path(".")
+    for module_file in modules_dir.glob("*.py"):
+        if module_file.name in ["test_bot_main.py", "__init__.py"]:
+            continue
+        module_name = module_file.stem
+        spec = importlib.util.spec_from_file_location(module_name, module_file)
+        if spec:
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+            if hasattr(module, 'get_questions'):
+                modules[module_name] = module
+                logger.info(f"Loaded module: {module_name}")
 
 @bot.message_handler(commands=['start'])
-def start(message):
+def start_handler(message):
     user_id = message.from_user.id
-    user_data[user_id] = {'state': States.START, 'message_id': message.message_id}
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("Начать тест", callback_data="start_test"))
-    bot.send_message(message.chat.id, "Добро пожаловать! Нажмите кнопку для начала.", reply_markup=markup)
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for module_name in modules:
+        markup.add(types.InlineKeyboardButton(
+            f"Тест: {module_name.replace('_', ' ').title()}", 
+            callback_data=f"start_test:{module_name}"
+        ))
+    
+    markup.add(types.InlineKeyboardButton("Помощь", callback_data="help"))
+    bot.send_message(user_id, "Выберите тест:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('start_test:'))
+def start_test(call):
+    _, module_name = call.data.split(':', 1)
+    user_id = call.from_user.id
+    
+    with db_lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT full_name FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+    
+    if not result:
+        msg = bot.send_message(user_id, "Введите ФИО:")
+        user_states[user_id] = {'state': 'waiting_name', 'module': module_name}
+        bot.register_next_step_handler(msg, process_name)
+    else:
+        start_quiz(user_id, module_name, call.message.message_id)
+
+def process_name(message):
+    user_id = message.from_user.id
+    if user_id not in user_states:
+        return
+    
+    state = user_states[user_id]
+    if state['state'] == 'waiting_name':
+        full_name = message.text.strip()
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO users (user_id, full_name) VALUES (?, ?)", 
+                         (user_id, full_name))
+            conn.commit()
+            conn.close()
+        
+        msg = bot.send_message(user_id, "Введите должность:")
+        user_states[user_id]['full_name'] = full_name
+        user_states[user_id]['state'] = 'waiting_position'
+        bot.register_next_step_handler(msg, process_position)
+
+def process_position(message):
+    user_id = message.from_user.id
+    if user_id not in user_states:
+        return
+    
+    state = user_states[user_id]
+    position = message.text.strip()
+    user_states[user_id]['position'] = position
+    
+    msg = bot.send_message(user_id, "Введите отдел:")
+    user_states[user_id]['state'] = 'waiting_department'
+    bot.register_next_step_handler(msg, process_department)
+
+def process_department(message):
+    user_id = message.from_user.id
+    if user_id not in user_states:
+        return
+    
+    state = user_states[user_id]
+    department = message.text.strip()
+    module_name = state['module']
+    
+    with db_lock:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE users SET position = ?, department = ? 
+            WHERE user_id = ?
+        ''', (state['position'], department, user_id))
+        conn.commit()
+        conn.close()
+    
+    start_quiz(user_id, module_name, None)
+
+def start_quiz(user_id, module_name, message_id):
+    if module_name not in modules:
+        bot.send_message(user_id, "Модуль не загружен")
+        return
+    
+    module = modules[module_name]
+    
+    if message_id:
+        try:
+            bot.delete_message(user_id, message_id)
+        except:
+            pass
+    
+    try:
+        start_time = time.time()
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO user_progress 
+                (user_id, module_name, current_question, start_time, answers, difficulty)
+                VALUES (?, ?, 0, ?, '{}', '')
+            ''', (user_id, module_name, start_time))
+            conn.commit()
+            conn.close()
+        
+        active_tests[user_id] = {
+            'module': module_name,
+            'message_id': None,
+            'start_time': start_time
+        }
+        
+        show_question(user_id, 0)
+        
+    except Exception as e:
+        logger.error(f"Error starting quiz {module_name}: {e}")
+        bot.send_message(user_id, "Ошибка запуска теста")
+
+def show_question(user_id, question_index):
+    if user_id not in active_tests:
+        return
+    
+    test_data = active_tests[user_id]
+    module_name = test_data['module']
+    module = modules[module_name]
+    
+    try:
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT answers, difficulty, questions FROM user_progress 
+                WHERE user_id = ? AND module_name = ?
+            ''', (user_id, module_name))
+            result = cursor.fetchone()
+            conn.close()
+        
+        answers = eval(result[0]) if result and result[0] else {}
+        difficulty = result[1] if result else ''
+        stored_questions = json.loads(result[2]) if result and result[2] else []
+        
+        module_data = module.get_questions()
+        
+        if isinstance(module_data, dict) and module_data.get('type') == 'difficulty_menu':
+            text = module_data['text']
+            markup = module_data['markup']
+            
+            if test_data['message_id']:
+                try:
+                    bot.edit_message_text(text, user_id, test_data['message_id'], reply_markup=markup)
+                except:
+                    msg = bot.send_message(user_id, text, reply_markup=markup)
+                    test_data['message_id'] = msg.message_id
+            else:
+                msg = bot.send_message(user_id, text, reply_markup=markup)
+                test_data['message_id'] = msg.message_id
+            return
+        
+        questions = stored_questions if stored_questions else module_data
+        
+        if question_index >= len(questions):
+            finish_test(user_id)
+            return
+        
+        question = questions[question_index]
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        
+        current_answers = answers.get(question_index, [])
+        for i, option in enumerate(question['options']):
+            status = "X" if i in current_answers else str(i+1)
+            callback_data = f"toggle_answer:{module_name}:{question_index}:{i}"
+            markup.add(types.InlineKeyboardButton(f"{status} {option}", callback_data))
+        
+        next_btn_text = "Завершить тест" if question_index == len(questions) - 1 else "Далее"
+        markup.add(types.InlineKeyboardButton(next_btn_text, 
+                                            callback_data=f"next_question:{module_name}:{question_index}"))
+        markup.row(types.InlineKeyboardButton("⏰ Завершить тест", 
+                                            callback_data=f"finish:{module_name}"))
+        
+        text = f"Вопрос {question_index + 1}/{len(questions)}\n\n{question.get('question', question.get('text', 'Вопрос'))}\nВыбрано: {len(current_answers)}"
+        
+        if test_data['message_id']:
+            try:
+                bot.edit_message_text(text, user_id, test_data['message_id'], reply_markup=markup)
+            except:
+                msg = bot.send_message(user_id, text, reply_markup=markup)
+                test_data['message_id'] = msg.message_id
+        else:
+            msg = bot.send_message(user_id, text, reply_markup=markup)
+            test_data['message_id'] = msg.message_id
+            
+    except Exception as e:
+        logger.error(f"Error showing question {question_index}: {e}")
+        bot.send_message(user_id, "Ошибка показа вопроса")
+
+def finish_test(user_id):
+    if user_id not in active_tests:
+        return
+    
+    test_data = active_tests[user_id]
+    module_name = test_data['module']
+    
+    try:
+        with db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT answers, start_time, questions FROM user_progress 
+                WHERE user_id = ? AND module_name = ?
+            ''', (user_id, module_name))
+            result = cursor.fetchone()
+            conn.close()
+        
+        if result:
+            answers = eval(result[0]) if result[0] else {}
+            start_time = result[1]
+            stored_questions = json.loads(result[2]) if result[2] else []
+            time_spent = time.time() - start_time
+            
+            module = modules[module_name]
+            questions = stored_questions if stored_questions else module.get_questions()
+            score = module.calculate_score(questions, answers)
+            
+            total_questions = len(questions)
+            
+            with db_lock:
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO test_results (user_id, module_name, score, total_questions, time_spent)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_id, module_name, score, total_questions, time_spent))
+                cursor.execute('DELETE FROM user_progress WHERE user_id = ? AND module_name = ?', 
+                             (user_id, module_name))
+                conn.commit()
+                conn.close()
+            
+            if test_data['message_id']:
+                try:
+                    bot.delete_message(user_id, test_data['message_id'])
+                except:
+                    pass
+            
+            percentage = (score / total_questions) * 100 if total_questions > 0 else 0
+            result_text = f"""
+🎉 Тест завершен!
+
+Результаты:
+✅ Правильных: {score}/{total_questions}
+📊 Процент: {percentage:.1f}%
+⏱️ Время: {time_spent:.0f}с
+
+Модуль: {module_name.replace('_', ' ').title()}
+            """
+            
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔄 Новый тест", callback_data="start"))
+            
+            bot.send_message(user_id, result_text.strip(), reply_markup=markup)
+            
+            if hasattr(module, 'generate_certificate'):
+                try:
+                    certificate_path = module.generate_certificate(user_id, score, total_questions, time_spent)
+                    if certificate_path:
+                        with open(certificate_path, 'rb') as cert:
+                            bot.send_document(user_id, cert, caption="Сертификат")
+                        os.remove(certificate_path)
+                except:
+                    pass
+        
+        del active_tests[user_id]
+        
+    except Exception as e:
+        logger.error(f"Error finishing test: {e}")
+        bot.send_message(user_id, "Ошибка завершения теста")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     user_id = call.from_user.id
-    chat_id = call.message.chat.id
-    message_id = call.message.message_id
+    data = call.data
     
-    if user_id not in user_data:
-        user_data[user_id] = {'state': States.START}
-    data = user_data[user_id]
-    data['message_id'] = message_id
-    
-    if call.data.startswith(('ans_', 'clear_', 'next_q')):
-        if data.get('test_instance'):
-            data['test_instance'].handle_callback(call)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if call.data == "start_test":
-        data['state'] = States.SPECIALIZATION
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for mod_name in test_modules:
-            markup.add(types.InlineKeyboardButton(mod_name.replace('_test_bot', '').title(), 
-                                                callback_data=f"spec_{mod_name}"))
-        safe_edit(chat_id, message_id, "Выберите специализацию:", markup)
+    try:
+        if data == "start":
+            if call.message and call.message.message_id:
+                try:
+                    bot.delete_message(user_id, call.message.message_id)
+                except:
+                    pass
+            start_handler(call.message)
+            bot.answer_callback_query(call.id)
+            return
         
-    elif call.data.startswith("spec_"):
-        data['specialization'] = call.data[5:]
-        data['state'] = States.DIFFICULTY
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("Легкий", callback_data="diff_easy"))
-        markup.add(types.InlineKeyboardButton("Средний", callback_data="diff_medium"))
-        markup.add(types.InlineKeyboardButton("Сложный", callback_data="diff_hard"))
-        safe_edit(chat_id, message_id, "Выберите уровень сложности:", markup)
+        if data == "help":
+            bot.edit_message_text(
+                "Инструкция:\n1. Выберите тест\n2. Введите данные\n3. Выберите сложность\n4. Отвечайте (можно отменить выбор X)\n5. Далее/Завершить\n6. Получите результат",
+                user_id, call.message.message_id
+            )
+            bot.answer_callback_query(call.id)
+            return
         
-    elif call.data.startswith("diff_"):
-        data['difficulty'] = call.data[5:]
-        data['state'] = States.REG_FIO
-        safe_edit(chat_id, message_id, "Введите ФИО:", types.InlineKeyboardMarkup())
-        bot.answer_callback_query(call.id)
-        bot.register_next_step_handler_by_chat_id(chat_id, process_fio)
+        if data.startswith("difficulty:"):
+            difficulty = data.split(":", 1)[1]
+            test_data = active_tests.get(user_id)
+            if test_
+                module_name = test_data['module']
+                module = modules[module_name]
+                info = getattr(module, 'DIFFICULTIES', {}).get(difficulty, {})
+                
+                if 'ql' in dir(module):
+                    questions = module.ql.get_random_questions(info['questions'])
+                else:
+                    questions = []
+                
+                with db_lock:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE user_progress SET difficulty = ?, questions = ? 
+                        WHERE user_id = ? AND module_name = ?
+                    ''', (difficulty, json.dumps(questions), user_id, module_name))
+                    conn.commit()
+                    conn.close()
+                
+                test_data['questions'] = questions
+                bot.answer_callback_query(call.id, f"Сложность: {info['name']}")
+                show_question(user_id, 0)
+            return
         
-    elif call.data == "finish_test":
-        if data.get('test_instance'):
-            data['test_instance'].finish_test(chat_id, message_id)
-        safe_edit(chat_id, message_id, "Тест завершен! Сертификат отправлен.")
+        if data.startswith("toggle_answer:"):
+            parts = data.split(":")
+            _, module_name, question_idx, answer_idx = parts
+            question_idx = int(question_idx)
+            answer_idx = int(answer_idx)
+            
+            if user_id in active_tests and active_tests[user_id]['module'] == module_name:
+                with db_lock:
+                    conn = sqlite3.connect(DB_PATH)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        SELECT answers FROM user_progress 
+                        WHERE user_id = ? AND module_name = ?
+                    ''', (user_id, module_name))
+                    result = cursor.fetchone()
+                    answers = eval(result[0]) if result and result[0] else {}
+                    
+                    if question_idx not in answers:
+                        answers[question_idx] = []
+                    
+                    answer_id = int(answer_idx)
+                    if answer_id in answers[question_idx]:
+                        answers[question_idx].remove(answer_id)
+                    else:
+                        answers[question_idx].append(answer_id)
+                    
+                    cursor.execute('''
+                        UPDATE user_progress SET answers = ? WHERE user_id = ? AND module_name = ?
+                    ''', (str(answers), user_id, module_name))
+                    conn.commit()
+                    conn.close()
+                
+                bot.answer_callback_query(call.id, "Ответ обновлен")
+                show_question(user_id, question_idx)
+            return
         
-    elif call.data == "certificate":
-        try:
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.pagesizes import A4
-            import io
-            
-            buffer = io.BytesIO()
-            p = canvas.Canvas(buffer, pagesize=A4)
-            width, height = A4
-            
-            fio = data['fio']
-            position = data['position']
-            department = data['department']
-            score = data.get('score', 0)
-            total = data.get('total_questions', 10)
-            
-            p.setFont("Helvetica-Bold", 20)
-            p.drawCentredText(width/2, height-100, "СЕРТИФИКАТ")
-            p.setFont("Helvetica", 14)
-            p.drawCentredText(width/2, height-150, fio)
-            p.drawCentredText(width/2, height-180, f"{position}, {department}")
-            p.drawCentredText(width/2, height-220, f"Балл: {score}/{total}")
-            p.showPage()
-            p.save()
-            
-            buffer.seek(0)
-            bot.send_document(chat_id, document=buffer, 
-                            filename=f"certificate_{chat_id}.pdf")
-            safe_edit(chat_id, message_id, "✅ Сертификат отправлен!")
-        except Exception as e:
-            logging.error(f"Certificate error: {e}")
-            safe_edit(chat_id, message_id, "❌ Ошибка генерации сертификата")
-    
-    elif call.data == "new_test":
-        del user_data[user_id]
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Начать тест", callback_data="start_test"))
-        safe_edit(chat_id, message_id, "Добро пожаловать! Нажмите кнопку для начала.", markup)
-    
-    bot.answer_callback_query(call.id)
-
-def process_fio(message):
-    user_id = message.from_user.id
-    if user_id in user_data:
-        user_data[user_id]['fio'] = message.text.strip()
-        user_data[user_id]['state'] = States.REG_POSITION
-        bot.send_message(message.chat.id, "Введите должность:")
-
-def process_position(message):
-    user_id = message.from_user.id
-    if user_id in user_data:
-        user_data[user_id]['position'] = message.text.strip()
-        user_data[user_id]['state'] = States.REG_DEPARTMENT
-        bot.send_message(message.chat.id, "Введите подразделение:")
-
-def process_department(message):
-    user_id = message.from_user.id
-    if user_id in user_data:
-        user_data[user_id]['department'] = message.text.strip()
-        user_data[user_id]['state'] = States.TESTING
-        start_test(user_id, message.chat.id)
-
-def start_test(user_id, chat_id):
-    data = user_data[user_id]
-    spec_module = test_modules[data['specialization']]
-    test_instance = spec_module.TestBot(bot, data, chat_id)
-    data['test_instance'] = test_instance
-    data['start_time'] = time.time()
-    test_instance.send_question(chat_id, data['message_id'])
+        if data.startswith("next_question:"):
+            parts = data.split(":")
+            _, module_name, question_idx = parts
+            question_idx = int(question_idx)
+            if user_id in active_tests and active_tests[user_id]['module'] == module_name:
+                bot.answer_callback_query(call.id, "Следующий вопрос")
+                show_question(user_id, question_idx + 1)
+            return
+        
+        elif data.startswith("finish:"):
+            _, module_name = data.split(":", 1)
+            bot.answer_callback_query(call.id, "Завершение теста...")
+            finish_test(user_id)
+        
+    except Exception as e:
+        logger.error(f"Callback error: {e}")
+        bot.answer_callback_query(call.id, "Ошибка обработки")
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
     init_db()
-    load_test_modules()
-    logging.info("Bot started")
-    bot.infinity_polling(skip_pending=True)
+    load_modules()
+    logger.info("Bot started")
+    while True:
+        try:
+            bot.infinity_polling(none_stop=True, interval=1, timeout=30)
+        except Exception as e:
+            logger.error(f"Polling error: {e}")
+            time.sleep(10)
