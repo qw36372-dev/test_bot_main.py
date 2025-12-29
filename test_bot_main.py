@@ -1,4 +1,3 @@
-# 100% ready
 import os
 import time
 import logging
@@ -7,193 +6,185 @@ import telebot
 from telebot import types
 import signal
 import sys
+import sqlite3
 
+logging.basicConfig(level=logging.INFO)
 API_TOKEN = os.environ.get("API_TOKEN")
 if not API_TOKEN:
-    raise RuntimeError("API_TOKEN not set in environment")
+    raise ValueError("API_TOKEN not found")
 
 bot = telebot.TeleBot(API_TOKEN)
-loaded_bots = {}
+user_data = {}
+test_modules = {}
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+class States:
+    START = 0
+    REG_FIO = 1
+    REG_POSITION = 2
+    REG_DEPARTMENT = 3
+    SPECIALIZATION = 4
+    DIFFICULTY = 5
+    TESTING = 6
 
-SPECIALIZATIONS = {
-    "ООУПДС": "OUPDS_test_bot.py",
-    "Исполнители": "Ispolniteli_test_bot.py",
-    "Дознание": "Doznanie_test_bot.py",
-    "Алименты": "Aliment_test_bot.py",
-    "Розыск": "Rozisk_test_bot.py",
-    "ОПП": "Prof_test_bot.py",
-    "ОКО": "OKO_test_bot.py",
-    "Информатизация": "Informatizaciya_test_bot.py",
-    "Кадры": "Kadri_test_bot.py",
-    "ОСБ": "Bezopasnost_test_bot.py",
-    "Управление": "Starshie_test_bot.py"
-}
+def load_test_modules():
+    for filename in os.listdir('.'):
+        if filename.endswith("_test_bot.py"):
+            module_name = filename[:-3]
+            spec = importlib.util.spec_from_file_location(module_name, filename)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            test_modules[module_name] = module
+            logging.info(f"Loaded {module_name}")
 
-def load_bot_module(filename):
+def init_db():
+    conn = sqlite3.connect('users.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users 
+                 (user_id INTEGER PRIMARY KEY, fio TEXT, position TEXT, department TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS results 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, 
+                  specialization TEXT, difficulty TEXT, score INTEGER, time_taken REAL)''')
+    conn.commit()
+    conn.close()
+
+def safe_edit(chat_id, message_id, text, reply_markup=None):
     try:
-        full_path = os.path.join(os.path.dirname(__file__), filename)
-        if not os.path.exists(full_path):
-            logger.error(f"File not found: {full_path}")
-            return None
-        spec = importlib.util.spec_from_file_location(filename[:-3], full_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        if hasattr(module, 'init_test_module'):
-            module.init_test_module(bot)
-        logger.info(f"Loaded module: {filename}")
-        return module
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
+                            text=text, reply_markup=reply_markup, parse_mode=None)
+        return True
     except Exception as e:
-        logger.error(f"Failed to load {filename}: {e}")
-        return None
-
-def reload_modules():
-    global loaded_bots
-    logger.info("Reloading modules...")
-    loaded_bots.clear()
-    for name, filename in SPECIALIZATIONS.items():
-        loaded_bots[filename] = load_bot_module(filename)
-
-def safe_delete_message(chat_id, message_id):
-    try:
-        bot.delete_message(chat_id, message_id)
-    except:
-        pass
-
-def show_main_menu(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    buttons = [
-        ["ООУПДС", "Исполнители"],
-        ["Дознание", "Алименты"], 
-        ["Розыск", "ОПП"],
-        ["ОКО", "Информатизация"],
-        ["Кадры", "ОСБ"],
-        ["Управление"]
-    ]
-    for row in buttons:
-        markup.row(*[types.KeyboardButton(name) for name in row])
-    bot.send_message(message.chat.id, "Главное меню. Выберите специализацию:", reply_markup=markup)
-    safe_delete_message(message.chat.id, message.message_id)
+        if "message is not modified" in str(e).lower() or "message to edit not found" in str(e).lower():
+            return True
+        logging.error(f"Edit error: {e}")
+        return False
 
 @bot.message_handler(commands=['start'])
-def start_handler(message):
-    show_main_menu(message)
-
-@bot.message_handler(func=lambda message: True)
-def global_message_handler(message):
-    text = message.text.strip() if message.text else ""
-    if text in SPECIALIZATIONS:
-        handle_specialization(message, text)
-        return
-    
-    for filename, module in loaded_bots.items():
-        if module and hasattr(module, 'handle_message') and module.handle_message(message):
-            return
-    show_main_menu(message)
-
-def handle_specialization(message, specialization_name):
-    filename = SPECIALIZATIONS.get(specialization_name)
-    if not filename or filename not in loaded_bots or not loaded_bots[filename]:
-        bot.send_message(message.chat.id, f"Модуль {specialization_name} не загружен")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("Запустить тест", callback_data=specialization_name),
-        types.InlineKeyboardButton("Перезагрузить модуль", callback_data=f"reload_{specialization_name}")
-    )
-    bot.send_message(message.chat.id, f"Специализация: {specialization_name}", reply_markup=markup)
+def start(message):
+    user_id = message.from_user.id
+    user_data[user_id] = {'state': States.START, 'message_id': message.message_id}
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("Начать тест", callback_data="start_test"))
+    bot.send_message(message.chat.id, "Добро пожаловать! Нажмите кнопку для начала.", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
-def universal_callback_handler(call):
-    data = call.data
+def callback_handler(call):
+    user_id = call.from_user.id
+    chat_id = call.message.chat.id
+    message_id = call.message.message_id
     
-    if data.startswith('reload_'):
-        spec_name = data[7:]
-        filename = SPECIALIZATIONS.get(spec_name)
-        if filename:
-            loaded_bots[filename] = load_bot_module(filename)
-            bot.answer_callback_query(call.id, f"Модуль {spec_name} перезагружен")
-            safe_delete_message(call.message.chat.id, call.message.message_id)
-            handle_specialization(call.message, spec_name)
-        return True
+    if user_id not in user_
+        user_data[user_id] = {'state': States.START}
+    data = user_data[user_id]
+    data['message_id'] = message_id
     
-    if call.data in SPECIALIZATIONS:
-        safe_delete_message(call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id, "Выберите сложность")
+    if call.data.startswith(('ans_', 'clear_', 'next_q')):
+        if data.get('test_instance'):
+            data['test_instance'].handle_callback(call)
+        bot.answer_callback_query(call.id)
+        return
         
-        filename = SPECIALIZATIONS[call.data]
-        module = loaded_bots.get(filename)
-        if module and hasattr(module, 'DIFFICULTIES'):
-            difficulties = module.DIFFICULTIES
-        else:
-            difficulties = {
-                'rezerv': {'questions': 20, 'time': 35*60, 'name': 'Резерв'},
-                'bazovyy': {'questions': 25, 'time': 40*60, 'name': 'Базовый'},
-                'standart': {'questions': 30, 'time': 45*60, 'name': 'Стандартный'},
-                'expert': {'questions': 50, 'time': 90*60, 'name': 'Эксперт'}
-            }
-        
+    if call.data == "start_test":
+        data['state'] = States.SPECIALIZATION
         markup = types.InlineKeyboardMarkup(row_width=1)
-        for diff_key, info in difficulties.items():
-            markup.add(types.InlineKeyboardButton(
-                f"{info['name']} ({info['questions']}в, {info['time']//60}мин)",
-                callback_data=f"{call.data}_{diff_key}_start"
-            ))
-        bot.send_message(call.from_user.id, "Выберите сложность:", reply_markup=markup)
-        return True
-    
-    if '_' in data and data.endswith('_start'):
-        parts = data.rsplit('_', 1)
-        spec_name = parts[0].rsplit('_', 1)[0] if '_' in parts[0] else parts[0]
-        difficulty = parts[1][:-6]
+        for mod_name in test_modules:
+            markup.add(types.InlineKeyboardButton(mod_name.replace('_test_bot', '').title(), 
+                                                callback_data=f"spec_{mod_name}"))
+        safe_edit(chat_id, message_id, "Выберите специализацию:", markup)
         
-        filename = SPECIALIZATIONS.get(spec_name)
-        module = loaded_bots.get(filename)
-        if module and hasattr(module, 'start_test'):
-            safe_delete_message(call.message.chat.id, call.message.message_id)
-            module.start_test(call.from_user.id, difficulty)
-            bot.answer_callback_query(call.id, f"Тест {difficulty} запущен")
-            return True
-    
-    for filename, module in loaded_bots.items():
+    elif call.data.startswith("spec_"):
+        data['specialization'] = call.data[5:]
+        data['state'] = States.DIFFICULTY
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("Легкий", callback_data="diff_easy"))
+        markup.add(types.InlineKeyboardButton("Средний", callback_data="diff_medium"))
+        markup.add(types.InlineKeyboardButton("Сложный", callback_data="diff_hard"))
+        safe_edit(chat_id, message_id, "Выберите уровень сложности:", markup)
+        
+    elif call.data.startswith("diff_"):
+        data['difficulty'] = call.data[5:]
+        data['state'] = States.REG_FIO
+        safe_edit(chat_id, message_id, "Введите ФИО:", types.InlineKeyboardMarkup())
+        bot.answer_callback_query(call.id)
+        bot.register_next_step_handler_by_chat_id(chat_id, process_fio)
+        
+    elif call.data == "finish_test":
+        if data.get('test_instance'):
+            data['test_instance'].finish_test(chat_id, message_id)
+        safe_edit(chat_id, message_id, "Тест завершен! Сертификат отправлен.")
+        
+    elif call.data == "certificate":
         try:
-            if module and hasattr(module, 'handle_callback') and module.handle_callback(call):
-                bot.answer_callback_query(call.id)
-                return True
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import A4
+            import io
+            
+            buffer = io.BytesIO()
+            p = canvas.Canvas(buffer, pagesize=A4)
+            width, height = A4
+            
+            fio = data['fio']
+            position = data['position']
+            department = data['department']
+            score = data.get('score', 0)
+            total = data.get('total_questions', 10)
+            
+            p.setFont("Helvetica-Bold", 20)
+            p.drawCentredText(width/2, height-100, "СЕРТИФИКАТ")
+            p.setFont("Helvetica", 14)
+            p.drawCentredText(width/2, height-150, fio)
+            p.drawCentredText(width/2, height-180, f"{position}, {department}")
+            p.drawCentredText(width/2, height-220, f"Балл: {score}/{total}")
+            p.showPage()
+            p.save()
+            
+            buffer.seek(0)
+            bot.send_document(chat_id, document=buffer, 
+                            filename=f"certificate_{chat_id}.pdf")
+            safe_edit(chat_id, message_id, "✅ Сертификат отправлен!")
         except Exception as e:
-            logger.error(f"Callback error in {filename}: {e}")
-            continue
+            logging.error(f"Certificate error: {e}")
+            safe_edit(chat_id, message_id, "❌ Ошибка генерации сертификата")
     
-    bot.answer_callback_query(call.id, "Неизвестная кнопка")
+    elif call.data == "new_test":
+        del user_data[user_id]
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("Начать тест", callback_data="start_test"))
+        safe_edit(chat_id, message_id, "Добро пожаловать! Нажмите кнопку для начала.", markup)
+        
+    bot.answer_callback_query(call.id)
 
-def signal_handler(sig, frame):
-    logger.info("Shutting down gracefully...")
-    sys.exit(0)
+def process_fio(message):
+    user_id = message.from_user.id
+    if user_id in user_
+        user_data[user_id]['fio'] = message.text.strip()
+        user_data[user_id]['state'] = States.REG_POSITION
+        bot.send_message(message.chat.id, "Введите должность:")
+
+def process_position(message):
+    user_id = message.from_user.id
+    if user_id in user_
+        user_data[user_id]['position'] = message.text.strip()
+        user_data[user_id]['state'] = States.REG_DEPARTMENT
+        bot.send_message(message.chat.id, "Введите подразделение:")
+
+def process_department(message):
+    user_id = message.from_user.id
+    if user_id in user_
+        user_data[user_id]['department'] = message.text.strip()
+        user_data[user_id]['state'] = States.TESTING
+        start_test(user_id, message.chat.id)
+
+def start_test(user_id, chat_id):
+    data = user_data[user_id]
+    spec_module = test_modules[data['specialization']]
+    test_instance = spec_module.TestBot(bot, data, chat_id)
+    data['test_instance'] = test_instance
+    data['start_time'] = time.time()
+    test_instance.send_question(chat_id, data['message_id'])
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    logger.info("Starting test bot...")
-    reload_modules()
-    logger.info("Available modules:")
-    for name, filename in SPECIALIZATIONS.items():
-        status = "✓" if filename in loaded_bots and loaded_bots[filename] else "✗"
-        logger.info(f"  {status} {name}: {filename}")
-    
-    try:
-        bot.infinity_polling(none_stop=True, interval=1, timeout=30)
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception as e:
-        logger.error(f"Bot crashed: {e}")
+    signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
+    init_db()
+    load_test_modules()
+    logging.info("Bot started")
+    bot.infinity_polling(skip_pending=True)
