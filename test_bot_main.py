@@ -1,4 +1,4 @@
-# test_bot_main.py
+# 29.12 12:56 test_bot_main.py
 import os
 import sys
 import time
@@ -74,19 +74,26 @@ def load_modules():
         if module_file.name in ["test_bot_main.py", "__init__.py"]:
             continue
         module_name = module_file.stem
-        spec = importlib.util.spec_from_file_location(module_name, module_file)
-        if spec:
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-            if hasattr(module, 'get_questions'):
-                modules[module_name] = module
-                logger.info(f"Loaded module: {module_name}")
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, module_file)
+            if spec:
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+                if hasattr(module, 'get_questions'):
+                    modules[module_name] = module
+                    logger.info(f"Loaded module: {module_name}")
+        except Exception as e:
+            logger.error(f"Failed to load module {module_name}: {e}")
 
 @bot.message_handler(commands=['start'])
 def start_handler(message):
     user_id = message.from_user.id
     markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    if not modules:
+        bot.send_message(user_id, "Модули тестов не загружены. Перезапуск...")
+        return
     
     for module_name in modules:
         markup.add(types.InlineKeyboardButton(
@@ -187,14 +194,17 @@ def start_quiz(user_id, module_name, message_id):
     
     try:
         start_time = time.time()
+        empty_answers = json.dumps({})
+        empty_questions = json.dumps([])
+        
         with db_lock:
             conn = sqlite3.connect(DB_PATH, timeout=10)
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO user_progress 
-                (user_id, module_name, current_question, start_time, answers, difficulty)
-                VALUES (?, ?, 0, ?, '{}", '')
-            ''', (user_id, module_name, start_time))
+                (user_id, module_name, current_question, start_time, answers, difficulty, questions)
+                VALUES (?, ?, 0, ?, ?, ?, ?)
+            ''', (user_id, module_name, start_time, empty_answers, '', empty_questions))
             conn.commit()
             conn.close()
         
@@ -229,9 +239,13 @@ def show_question(user_id, question_index):
             result = cursor.fetchone()
             conn.close()
         
-        answers = json.loads(result[0]) if result and result[0] else {}
-        difficulty = result[1] if result else ''
-        stored_questions = json.loads(result[2]) if result and result[2] else []
+        if not result:
+            bot.send_message(user_id, "Ошибка загрузки прогресса")
+            return
+            
+        answers = json.loads(result[0])
+        difficulty = result[1] or ''
+        stored_questions = json.loads(result[2])
         
         module_data = module.get_questions()
         
@@ -395,7 +409,7 @@ def callback_handler(call):
         if data.startswith("difficulty:"):
             difficulty = data.split(":", 1)[1]
             test_data = active_tests.get(user_id)
-            if test_data:
+            if test_
                 module_name = test_data['module']
                 module = modules[module_name]
                 info = getattr(module, 'DIFFICULTIES', {}).get(difficulty, {})
