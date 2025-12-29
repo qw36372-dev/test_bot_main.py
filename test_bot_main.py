@@ -82,7 +82,7 @@ def callback_handler(call):
             data['test_instance'].handle_callback(call)
         bot.answer_callback_query(call.id)
         return
-        
+    
     if call.data == "start_test":
         data['state'] = States.SPECIALIZATION
         markup = types.InlineKeyboardMarkup(row_width=1)
@@ -150,7 +150,7 @@ def callback_handler(call):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("Начать тест", callback_data="start_test"))
         safe_edit(chat_id, message_id, "Добро пожаловать! Нажмите кнопку для начала.", markup)
-        
+    
     bot.answer_callback_query(call.id)
 
 def process_fio(message):
