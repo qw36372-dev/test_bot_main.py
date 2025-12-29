@@ -5,6 +5,8 @@ import os
 import logging
 from telebot import types
 
+logging.basicConfig(level=logging.INFO)
+
 class TestBot:
     def __init__(self, bot_instance, user_data, chat_id):
         self.bot = bot_instance
@@ -16,19 +18,25 @@ class TestBot:
         # Поиск JSON в той же папке
         questions_file = "Aliment_test_bot_questions.json"
         if not os.path.exists(questions_file):
-            self.questions = [{"text": "Файл вопросов не найден!", "options": ["Ошибка"], "correct": 0}]
+            self.questions = [{"text": "Файл вопросов не найден! Проверьте наличие Aliment_test_bot_questions.json", "options": ["Ошибка"], "correct": 0}]
             logging.error(f"Questions file not found: {questions_file}")
         else:
-            with open(questions_file, 'r', encoding='utf-8') as f:
-                all_questions = json.load(f)
-            
-            difficulty = self.user_data.get('difficulty', 'easy')
-            self.questions = all_questions.get(difficulty, all_questions.get('easy', []))
-            
-            if not self.questions:
-                self.questions = [{"text": f"Вопросы для {difficulty} не найдены!", "options": ["Ошибка"], "correct": 0}]
+            try:
+                with open(questions_file, 'r', encoding='utf-8') as f:
+                    all_questions = json.load(f)
+                
+                difficulty = self.user_data.get('difficulty', 'easy')
+                self.questions = all_questions.get(difficulty, all_questions.get('easy', []))
+                
+                if not self.questions:
+                    self.questions = [{"text": f"Вопросы для уровня '{difficulty}' не найдены! Доступные: {list(all_questions.keys())}", "options": ["Ошибка"], "correct": 0}]
+                    logging.warning(f"No questions for difficulty: {difficulty}")
+            except json.JSONDecodeError as e:
+                self.questions = [{"text": f"Ошибка в JSON файле вопросов: {str(e)}", "options": ["Ошибка"], "correct": 0}]
+                logging.error(f"JSON decode error: {e}")
         
         self.total_questions = len(self.questions)
+        logging.info(f"Loaded {self.total_questions} questions for {difficulty}")
 
     def send_question(self, chat_id, message_id):
         if self.current_question >= self.total_questions:
@@ -55,7 +63,8 @@ class TestBot:
         try:
             self.bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
                                      text=text, reply_markup=markup, parse_mode=None)
-        except:
+        except Exception as e:
+            logging.error(f"Edit message error: {e}")
             self.bot.send_message(chat_id, text, reply_markup=markup)
 
     def handle_callback(self, call):
@@ -80,42 +89,50 @@ class TestBot:
         elif data == "next_q":
             if self.current_question < self.total_questions - 1:
                 self.current_question += 1
-            self.bot.answer_callback_query(call.id)
+            self.bot.answer_callback_query(call.id, "Следующий вопрос")
             self.send_question(chat_id, message_id)
             
         elif data == "finish_test":
             self.finish_test(chat_id, message_id)
-            self.bot.answer_callback_query(call.id)
+            self.bot.answer_callback_query(call.id, "Тест завершен")
 
     def finish_test(self, chat_id, message_id):
         score = sum(1 for i, ans in self.user_answers.items() 
                    if i < len(self.questions) and ans == self.questions[i]["correct"])
         time_taken = time.time() - self.user_data['start_time']
-        percentage = score / self.total_questions * 100
+        percentage = (score / self.total_questions * 100) if self.total_questions > 0 else 0
         
         # Сохранение данных в user_data для сертификата
         self.user_data['score'] = score
         self.user_data['total_questions'] = self.total_questions
         
         # Сохранение в БД
-        conn = sqlite3.connect('users.db', check_same_thread=False)
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO users (user_id, fio, position, department) VALUES (?, ?, ?, ?)",
-                 (chat_id, self.user_data['fio'], self.user_data['position'], self.user_data['department']))
-        c.execute("INSERT INTO results (user_id, specialization, difficulty, score, time_taken) VALUES (?, ?, ?, ?, ?)",
-                 (chat_id, self.user_data['specialization'], self.user_data['difficulty'], score, time_taken))
-        conn.commit()
-        conn.close()
+        try:
+            conn = sqlite3.connect('users.db', check_same_thread=False)
+            c = conn.cursor()
+            c.execute("INSERT OR REPLACE INTO users (user_id, fio, position, department) VALUES (?, ?, ?, ?)",
+                     (chat_id, self.user_data['fio'], self.user_data['position'], self.user_data['department']))
+            c.execute("INSERT INTO results (user_id, specialization, difficulty, score, time_taken) VALUES (?, ?, ?, ?, ?)",
+                     (chat_id, self.user_data['specialization'], self.user_data['difficulty'], score, time_taken))
+            conn.commit()
+            conn.close()
+            logging.info(f"Test results saved for user {chat_id}: {score}/{self.total_questions}")
+        except Exception as e:
+            logging.error(f"DB save error: {e}")
         
         # Статистика пользователя
-        conn = sqlite3.connect('users.db', check_same_thread=False)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*), AVG(score), AVG(time_taken) FROM results WHERE user_id=?", (chat_id,))
-        stats = c.fetchone()
-        total_tests = stats[0] if stats[0] > 0 else 0
-        avg_score = stats[1] * 100 / 10 if stats[1] else 0
-        avg_time = stats[2] if stats[2] else 0
-        conn.close()
+        try:
+            conn = sqlite3.connect('users.db', check_same_thread=False)
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*), AVG(score), AVG(time_taken) FROM results WHERE user_id=?", (chat_id,))
+            stats = c.fetchone()
+            total_tests = stats[0] if stats and stats[0] > 0 else 0
+            avg_score_raw = stats[1] if stats and stats[1] else 0
+            avg_score = (avg_score_raw / 10 * 100) if avg_score_raw else 0  # Нормализация под 10 вопросов
+            avg_time = stats[2] if stats and stats[2] else 0
+            conn.close()
+        except:
+            total_tests = avg_score = avg_time = 0
         
         text = (f"✅ Тест завершен!\n\n"
                 f"📊 Результат: **{score}/{self.total_questions} ({percentage:.1f}%)**\n"
@@ -136,5 +153,6 @@ class TestBot:
         try:
             self.bot.edit_message_text(chat_id=chat_id, message_id=message_id, 
                                      text=text, reply_markup=markup, parse_mode='Markdown')
-        except:
+        except Exception as e:
+            logging.error(f"Finish edit error: {e}")
             self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
