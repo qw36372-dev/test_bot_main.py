@@ -72,7 +72,7 @@ def callback_handler(call):
     chat_id = call.message.chat.id
     message_id = call.message.message_id
     
-    if user_id not in user_
+    if user_id not in user_data:
         user_data[user_id] = {'state': States.START}
     data = user_data[user_id]
     data['message_id'] = message_id
@@ -155,21 +155,21 @@ def callback_handler(call):
 
 def process_fio(message):
     user_id = message.from_user.id
-    if user_id in user_
+    if user_id in user_data:
         user_data[user_id]['fio'] = message.text.strip()
         user_data[user_id]['state'] = States.REG_POSITION
         bot.send_message(message.chat.id, "Введите должность:")
 
 def process_position(message):
     user_id = message.from_user.id
-    if user_id in user_
+    if user_id in user_data:
         user_data[user_id]['position'] = message.text.strip()
         user_data[user_id]['state'] = States.REG_DEPARTMENT
         bot.send_message(message.chat.id, "Введите подразделение:")
 
 def process_department(message):
     user_id = message.from_user.id
-    if user_id in user_
+    if user_id in user_data:
         user_data[user_id]['department'] = message.text.strip()
         user_data[user_id]['state'] = States.TESTING
         start_test(user_id, message.chat.id)
