@@ -1,9 +1,8 @@
-# Aliment_test_bot.py
+# Aliment_test_bot.py (ФИНАЛЬНАЯ с questions_library)
 import json
 import sqlite3
 import time
 import os
-import random
 from pathlib import Path
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -11,26 +10,11 @@ from reportlab.lib.units import cm
 from datetime import datetime
 from telebot import types
 
-class QuestionsLibrary:
-    def __init__(self, json_path):
-        self.questions = []
-        json_path = Path(json_path)
-        if json_path.exists():
-            try:
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    self.questions = json.load(f)
-            except:
-                self.questions = []
-    
-    def get_questions_count(self):
-        return len(self.questions)
-    
-    def get_random_questions(self, count):
-        if not self.questions:
-            return []
-        return random.sample(self.questions, min(count, len(self.questions)))
+# ✅ НОВАЯ БИБЛИОТЕКА
+from questions_library import QuestionsLibrary
 
-ql = QuestionsLibrary(f"{Path(__file__).stem}_questions.json")
+# ✅ АВТО-ПОИСК JSON
+ql = QuestionsLibrary("Aliment_test_bot_questions.json")
 
 DIFFICULTIES = {
     'rezerv': {'questions': 20, 'time': 35*60, 'name': 'Резерв'},
@@ -42,14 +26,15 @@ DIFFICULTIES = {
 def get_questions():
     markup = types.InlineKeyboardMarkup(row_width=1)
     for diff_key, info in DIFFICULTIES.items():
+        count = min(info['questions'], ql.get_questions_count())
         markup.add(types.InlineKeyboardButton(
-            f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", 
+            f"{info['name']} ({count}в, {info['time']//60}мин)", 
             callback_data=f"difficulty:{diff_key}"
         ))
     return {
         'type': 'difficulty_menu',
         'markup': markup,
-        'text': 'Выберите сложность теста:',
+        'text': f'Выберите сложность теста:\nЗагружено вопросов: {ql.get_questions_count()}',
         'data': list(DIFFICULTIES.keys())
     }
 
@@ -57,7 +42,7 @@ def calculate_score(questions, answers):
     score = 0
     for i, q in enumerate(questions):
         if i in answers and answers[i]:
-            correct_indices = [int(idx) for idx in q.get('correct', [])]
+            correct_indices = q.get('correct', [])
             user_answer = answers[i]
             if isinstance(user_answer, list):
                 if set(user_answer) == set(correct_indices):
@@ -67,53 +52,43 @@ def calculate_score(questions, answers):
     return score
 
 def generate_certificate(user_id, score, total_questions, time_spent):
-    db_path = f"{Path(__file__).stem}.db"
+    db_path = "test_bot.db"
     try:
-        conn = sqlite3.connect(db_path, timeout=10)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY, 
-                full_name TEXT, 
-                position TEXT, 
-                department TEXT,
-                first_start INTEGER DEFAULT 1
-            )
-        """)
-        cursor.execute("""
-            SELECT full_name, position, department FROM users 
-            WHERE user_id = ? ORDER BY first_start DESC LIMIT 1
-        """, (user_id,))
-        user_data = cursor.fetchone()
-        conn.close()
-        
-        if not user_
-            return None
+        with sqlite3.connect(db_path, timeout=10) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT full_name, position, department FROM users 
+                WHERE user_id = ? LIMIT 1
+            """, (user_id,))
+            user_data = cursor.fetchone()
             
-        filename = f"cert_{user_id}_{int(time.time())}.pdf"
-        c = canvas.Canvas(filename, pagesize=A4)
-        width, height = A4
-        
-        c.setFont("Helvetica-Bold", 28)
-        c.drawCentredText(width/2, height-5*cm, "СЕРТИФИКАТ")
-        c.setFont("Helvetica-Bold", 18)
-        c.drawCentredText(width/2, height-8*cm, "прохождение тестирования")
-        
-        c.setFont("Helvetica", 14)
-        y = height - 12*cm
-        info = [
-            f"ФИО: {user_data[0] or 'Не указано'}",
-            f"Должность: {user_data[1] or 'Не указано'}",
-            f"Подразделение: {user_data[2] or 'Не указано'}",
-            f"Результат: {score}/{total_questions} ({score/total_questions*100:.0f}%)",
-            f"Время прохождения: {int(time_spent//60)} мин {int(time_spent%60)} сек",
-            f"Дата: {datetime.now().strftime('%d.%m.%Y')}"
-        ]
-        for line in info:
-            c.drawCentredText(width/2, y, line)
-            y -= 1.2*cm
-        
-        c.save()
-        return filename
-    except:
+            if not user_data:
+                return None
+                
+            filename = f"cert_{user_id}_{int(time.time())}.pdf"
+            c = canvas.Canvas(filename, pagesize=A4)
+            width, height = A4
+            
+            c.setFont("Helvetica-Bold", 28)
+            c.drawCentredText(width/2, height-5*cm, "СЕРТИФИКАТ")
+            c.setFont("Helvetica-Bold", 18)
+            c.drawCentredText(width/2, height-8*cm, "прохождение тестирования")
+            
+            c.setFont("Helvetica", 14)
+            y = height - 12*cm
+            info = [
+                f"ФИО: {user_data[0] or 'Не указано'}",
+                f"Должность: {user_data[1] or 'Не указано'}",
+                f"Подразделение: {user_data[2] or 'Не указано'}",
+                f"Результат: {score}/{total_questions} ({score/total_questions*100:.0f}%)",
+                f"Время прохождения: {int(time_spent//60)} мин {int(time_spent%60)} сек",
+                f"Дата: {datetime.now().strftime('%d.%m.%Y')}"
+            ]
+            for line in info:
+                c.drawCentredText(width/2, y, line)
+                y -= 1.2*cm
+            
+            c.save()
+            return filename
+    except Exception:
         return None
