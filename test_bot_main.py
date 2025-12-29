@@ -1,4 +1,4 @@
-# 29.12 15:10 test_bot_main.py
+# 29.12 15:44 test_bot_main.py
 import os
 import sys
 import time
@@ -24,6 +24,21 @@ db_lock = Lock()
 modules = {}
 user_states = {}
 active_tests = {}
+
+# ✅ ВАШИ 11 специализаций + Помощь = 12 кнопок
+SPECIALIZATIONS = {
+    "ООУПДС": "OUPDS_test_bot.py",
+    "Исполнители": "Ispolniteli_test_bot.py", 
+    "Дознание": "Doznanie_test_bot.py",
+    "Алименты": "Aliment_test_bot.py",
+    "Розыск": "Rozisk_test_bot.py",
+    "ОПП": "Prof_test_bot.py",
+    "ОКО": "OKO_test_bot.py",
+    "Информатизация": "Informatizaciya_test_bot.py",
+    "Кадры": "Kadri_test_bot.py",
+    "ОСБ": "Bezopasnost_test_bot.py",
+    "Управление": "Starshie_test_bot.py"
+}
 
 DB_PATH = "test_bot.db"
 
@@ -106,21 +121,20 @@ def clean_chat(user_id, message_id):
 
 def create_modules_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    module_buttons = []
     
-    for module_name in modules:
-        module_buttons.append(types.KeyboardButton(
-            f"Тест: {module_name.replace('_', ' ').title()[:20]}"
-        ))
-    
-    for i in range(0, len(module_buttons), 2):
-        if i + 1 < len(module_buttons):
-            markup.row(module_buttons[i], module_buttons[i+1])
-        else:
-            markup.row(module_buttons[i])
+    # ✅ 11 кнопок по вашему списку
+    for spec_name in SPECIALIZATIONS.keys():
+        markup.add(types.KeyboardButton(spec_name))
     
     markup.row(types.KeyboardButton("🆘 Помощь"))
     return markup
+
+def get_module_name(display_name):
+    """Маппинг кнопки → имя файла модуля"""
+    if display_name in SPECIALIZATIONS:
+        filename = SPECIALIZATIONS[display_name]
+        return Path(filename).stem  # Убираем .py
+    return None
 
 @bot.message_handler(commands=['start'])
 @bot.message_handler(func=lambda message: message.text == "🆘 Помощь")
@@ -131,21 +145,21 @@ def start_handler(message):
     
     if message.text == "🆘 Помощь":
         bot.send_message(user_id, 
-            "Инструкция:\n1. Выберите тест из кнопок ниже\n2. Введите данные\n3. Выберите сложность\n4. Отвечайте\n5. Получите результат",
+            "Инструкция:\n1. Выберите тест из кнопок ниже\n2. Введите ФИО, должность, отдел\n3. Выберите сложность\n4. Отвечайте на вопросы\n5. Получите результат + сертификат",
             reply_markup=create_modules_keyboard())
         return
     
-    bot.send_message(user_id, "🎓 Выберите тест:", reply_markup=create_modules_keyboard())
+    bot.send_message(user_id, "🎓 Выберите специализацию:", reply_markup=create_modules_keyboard())
 
-@bot.message_handler(func=lambda message: message.text and message.text.startswith("Тест:"))
+@bot.message_handler(func=lambda message: message.text in SPECIALIZATIONS)
 def handle_module_selection(message):
     user_id = message.from_user.id
     clean_chat(user_id, message.message_id)
     
-    module_name = message.text.replace("Тест: ", "").replace(" ", "_").lower()
+    module_name = get_module_name(message.text)
     
-    if module_name not in modules:
-        bot.send_message(user_id, "Модуль не найден", reply_markup=create_modules_keyboard())
+    if not module_name or module_name not in modules:
+        bot.send_message(user_id, f"❌ Модуль '{message.text}' не загружен", reply_markup=create_modules_keyboard())
         return
     
     with db_lock:
@@ -256,6 +270,8 @@ def start_quiz(user_id, module_name, message_id):
         logger.error(f"Error starting quiz {module_name}: {e}")
         bot.send_message(user_id, "Ошибка запуска теста", reply_markup=create_modules_keyboard())
 
+# ... остальные функции без изменений (show_question, finish_test, callback_handler)
+
 def show_question(user_id, question_index):
     if user_id not in active_tests:
         return
@@ -309,206 +325,4 @@ def show_question(user_id, question_index):
         markup = types.InlineKeyboardMarkup(row_width=2)
         
         current_answers = answers.get(question_index, [])
-        for i, option in enumerate(question['options']):
-            status = "X" if i in current_answers else str(i+1)
-            callback_data = f"toggle_answer:{module_name}:{question_index}:{i}"
-            markup.add(types.InlineKeyboardButton(f"{status} {option}", callback_data))
-        
-        next_btn_text = "Завершить тест" if question_index == len(questions) - 1 else "Далее"
-        markup.add(types.InlineKeyboardButton(next_btn_text, 
-                                            callback_data=f"next_question:{module_name}:{question_index}"))
-        markup.row(types.InlineKeyboardButton("⏰ Завершить тест", 
-                                            callback_data=f"finish:{module_name}"))
-        
-        text = f"Вопрос {question_index + 1}/{len(questions)}\n\n{question.get('question', question.get('text', 'Вопрос'))}\nВыбрано: {len(current_answers)}"
-        
-        if test_data['message_id']:
-            try:
-                bot.edit_message_text(text, user_id, test_data['message_id'], reply_markup=markup)
-            except:
-                msg = bot.send_message(user_id, text, reply_markup=markup)
-                test_data['message_id'] = msg.message_id
-        else:
-            msg = bot.send_message(user_id, text, reply_markup=markup)
-            test_data['message_id'] = msg.message_id
-            
-    except Exception as e:
-        logger.error(f"Error showing question {question_index}: {e}")
-        bot.send_message(user_id, "Ошибка показа вопроса")
-
-def finish_test(user_id):
-    if user_id not in active_tests:
-        return
-    
-    test_data = active_tests[user_id]
-    module_name = test_data['module']
-    
-    try:
-        with db_lock:
-            conn = sqlite3.connect(DB_PATH, timeout=10)
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT answers, start_time, questions FROM user_progress 
-                WHERE user_id = ? AND module_name =
-
-                SELECT answers, start_time, questions FROM user_progress 
-                WHERE user_id = ? AND module_name = ?
-            ''', (user_id, module_name))
-            result = cursor.fetchone()
-            conn.close()
-        
-        if result:
-            answers = json.loads(result[0]) if result[0] else {}
-            start_time = result[1]
-            stored_questions = json.loads(result[2]) if result[2] else []
-            time_spent = time.time() - start_time
-            
-            module = modules[module_name]
-            questions = stored_questions if stored_questions else []
-            score = module.calculate_score(questions, answers)
-            total_questions = len(questions)
-            
-            with db_lock:
-                conn = sqlite3.connect(DB_PATH, timeout=10)
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO test_results (user_id, module_name, score, total_questions, time_spent)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (user_id, module_name, score, total_questions, time_spent))
-                cursor.execute('DELETE FROM user_progress WHERE user_id = ? AND module_name = ?', 
-                             (user_id, module_name))
-                conn.commit()
-                conn.close()
-            
-            if test_data['message_id']:
-                clean_chat(user_id, test_data['message_id'])
-            
-            percentage = (score / total_questions) * 100 if total_questions > 0 else 0
-            result_text = f"""✅ Тест завершен!
-
-Результаты:
-Правильных: {score}/{total_questions}
-Процент: {percentage:.1f}%
-Время: {time_spent:.0f}с
-
-Модуль: {module_name.replace('_', ' ').title()}"""
-            
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔄 Новый тест", callback_data="new_test"))
-            
-            bot.send_message(user_id, result_text, reply_markup=markup)
-            
-            if hasattr(module, 'generate_certificate'):
-                try:
-                    certificate_path = module.generate_certificate(user_id, score, total_questions, time_spent)
-                    if certificate_path and Path(certificate_path).exists():
-                        with open(certificate_path, 'rb') as cert:
-                            bot.send_document(user_id, cert, caption="📜 Сертификат")
-                        os.remove(certificate_path)
-                except Exception as cert_e:
-                    logger.error(f"Certificate error: {cert_e}")
-        
-        del active_tests[user_id]
-        
-    except Exception as e:
-        logger.error(f"Error finishing test: {e}")
-        bot.send_message(user_id, "Ошибка завершения теста", reply_markup=create_modules_keyboard())
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    user_id = call.from_user.id
-    data = call.data
-    
-    try:
-        if data in ["start", "new_test"]:
-            bot.send_message(user_id, "Выберите тест:", reply_markup=create_modules_keyboard())
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data.startswith("difficulty:"):
-            difficulty = data.split(":", 1)[1]
-            test_data = active_tests.get(user_id)
-            if test_data:
-                module_name = test_data['module']
-                module = modules[module_name]
-                info = getattr(module, 'DIFFICULTIES', {}).get(difficulty, {})
-                
-                if hasattr(module, 'ql') and module.ql:
-                    questions = module.ql.get_random_questions(info['questions'])
-                else:
-                    questions = []
-                
-                with db_lock:
-                    conn = sqlite3.connect(DB_PATH, timeout=10)
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        UPDATE user_progress SET difficulty = ?, questions = ? 
-                        WHERE user_id = ? AND module_name = ?
-                    ''', (difficulty, json.dumps(questions), user_id, module_name))
-                    conn.commit()
-                    conn.close()
-                
-                bot.answer_callback_query(call.id, f"Сложность: {info['name']}")
-                show_question(user_id, 0)
-            return
-        
-        if data.startswith("toggle_answer:"):
-            parts = data.split(":")
-            _, module_name, question_idx, answer_idx = parts
-            question_idx = int(question_idx)
-            answer_idx = int(answer_idx)
-            
-            if user_id in active_tests and active_tests[user_id]['module'] == module_name:
-                with db_lock:
-                    conn = sqlite3.connect(DB_PATH, timeout=10)
-                    cursor = conn.cursor()
-                    cursor.execute('SELECT answers FROM user_progress WHERE user_id = ? AND module_name = ?',
-                                 (user_id, module_name))
-                    result = cursor.fetchone()
-                    answers = json.loads(result[0]) if result and result[0] else {}
-                    
-                    if question_idx not in answers:
-                        answers[question_idx] = []
-                    
-                    answer_id = int(answer_idx)
-                    if answer_id in answers[question_idx]:
-                        answers[question_idx].remove(answer_id)
-                    else:
-                        answers[question_idx].append(answer_id)
-                    
-                    cursor.execute('UPDATE user_progress SET answers = ? WHERE user_id = ? AND module_name = ?',
-                                 (json.dumps(answers), user_id, module_name))
-                    conn.commit()
-                    conn.close()
-                
-                bot.answer_callback_query(call.id, "Ответ обновлен")
-                show_question(user_id, question_idx)
-            return
-        
-        if data.startswith("next_question:"):
-            parts = data.split(":")
-            _, module_name, question_idx = parts
-            question_idx = int(question_idx)
-            if user_id in active_tests and active_tests[user_id]['module'] == module_name:
-                bot.answer_callback_query(call.id, "Следующий вопрос")
-                show_question(user_id, question_idx + 1)
-            return
-        
-        if data.startswith("finish:"):
-            bot.answer_callback_query(call.id, "Завершение теста...")
-            finish_test(user_id)
-        
-    except Exception as e:
-        logger.error(f"Callback error: {e}")
-        bot.answer_callback_query(call.id, "Ошибка обработки")
-
-if __name__ == "__main__":
-    init_db()
-    load_modules()
-    logger.info("Bot started")
-    while True:
-        try:
-            bot.infinity_polling(none_stop=True, interval=1, timeout=30)
-        except Exception as e:
-            logger.error(f"Polling error: {e}")
-            time.sleep(10)
+        for i, option in enumerate
