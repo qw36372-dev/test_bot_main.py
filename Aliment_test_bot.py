@@ -1,4 +1,4 @@
-# 29.12 12:56 Aliment_test_bot.py (ФИНАЛЬНАЯ с questions_library)
+# 29.12 14:50 Aliment_test_bot.py (ФИНАЛЬНАЯ с questions_library)
 import json
 import sqlite3
 import time
