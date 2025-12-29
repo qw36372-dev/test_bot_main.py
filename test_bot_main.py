@@ -1,4 +1,4 @@
-# 29.12 12:56 test_bot_main.py
+# 29.12 14:48 test_bot_main.py
 import os
 import sys
 import time
@@ -86,9 +86,18 @@ def load_modules():
         except Exception as e:
             logger.error(f"Failed to load module {module_name}: {e}")
 
+def clean_chat(user_id, message_id):
+    """Очистка чата"""
+    try:
+        bot.delete_message(user_id, message_id)
+    except:
+        pass
+
 @bot.message_handler(commands=['start'])
 def start_handler(message):
     user_id = message.from_user.id
+    clean_chat(user_id, message.message_id)
+    
     markup = types.InlineKeyboardMarkup(row_width=1)
     
     if not modules:
@@ -109,6 +118,8 @@ def start_test(call):
     _, module_name = call.data.split(':', 1)
     user_id = call.from_user.id
     
+    clean_chat(user_id, call.message.message_id)
+    
     with db_lock:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -128,7 +139,9 @@ def process_name(message):
     if user_id not in user_states:
         return
     
+    clean_chat(user_id, message.message_id)
     state = user_states[user_id]
+    
     if state['state'] == 'waiting_name':
         full_name = message.text.strip()
         with db_lock:
@@ -149,7 +162,9 @@ def process_position(message):
     if user_id not in user_states:
         return
     
+    clean_chat(user_id, message.message_id)
     state = user_states[user_id]
+    
     position = message.text.strip()
     user_states[user_id]['position'] = position
     
@@ -162,17 +177,17 @@ def process_department(message):
     if user_id not in user_states:
         return
     
+    clean_chat(user_id, message.message_id)
     state = user_states[user_id]
+    
     department = message.text.strip()
     module_name = state['module']
     
     with db_lock:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE users SET position = ?, department = ? 
-            WHERE user_id = ?
-        ''', (state['position'], department, user_id))
+        cursor.execute('UPDATE users SET position = ?, department = ? WHERE user_id = ?',
+                     (state['position'], department, user_id))
         conn.commit()
         conn.close()
     
@@ -185,12 +200,6 @@ def start_quiz(user_id, module_name, message_id):
         return
     
     module = modules[module_name]
-    
-    if message_id:
-        try:
-            bot.delete_message(user_id, message_id)
-        except:
-            pass
     
     try:
         start_time = time.time()
@@ -247,25 +256,26 @@ def show_question(user_id, question_index):
         difficulty = result[1] or ''
         stored_questions = json.loads(result[2])
         
-        module_data = module.get_questions()
-        
-        if isinstance(module_data, dict) and module_data.get('type') == 'difficulty_menu':
-            text = module_data['text']
-            markup = module_data['markup']
-            
-            if test_data['message_id']:
-                try:
-                    bot.edit_message_text(text, user_id, test_data['message_id'], reply_markup=markup)
-                except:
+        # ✅ Показываем меню сложностей если нет вопросов
+        if not stored_questions or difficulty == '':
+            module_data = module.get_questions()
+            if isinstance(module_data, dict) and module_data.get('type') == 'difficulty_menu':
+                text = module_data['text']
+                markup = module_data['markup']
+                
+                if test_data['message_id']:
+                    try:
+                        bot.edit_message_text(text, user_id, test_data['message_id'], reply_markup=markup)
+                    except:
+                        msg = bot.send_message(user_id, text, reply_markup=markup)
+                        test_data['message_id'] = msg.message_id
+                else:
                     msg = bot.send_message(user_id, text, reply_markup=markup)
                     test_data['message_id'] = msg.message_id
-            else:
-                msg = bot.send_message(user_id, text, reply_markup=markup)
-                test_data['message_id'] = msg.message_id
-            return
+                return
         
-        questions = stored_questions if stored_questions else module_data
-        
+        # Показываем вопросы
+        questions = stored_questions
         if question_index >= len(questions):
             finish_test(user_id)
             return
@@ -326,9 +336,8 @@ def finish_test(user_id):
             time_spent = time.time() - start_time
             
             module = modules[module_name]
-            questions = stored_questions if stored_questions else module.get_questions()
+            questions = stored_questions if stored_questions else []
             score = module.calculate_score(questions, answers)
-            
             total_questions = len(questions)
             
             with db_lock:
@@ -343,11 +352,7 @@ def finish_test(user_id):
                 conn.commit()
                 conn.close()
             
-            if test_data['message_id']:
-                try:
-                    bot.delete_message(user_id, test_data['message_id'])
-                except:
-                    pass
+            clean_chat(user_id, test_data['message_id'])
             
             percentage = (score / total_questions) * 100 if total_questions > 0 else 0
             result_text = f"""
@@ -389,11 +394,7 @@ def callback_handler(call):
     
     try:
         if data == "start":
-            if call.message and call.message.message_id:
-                try:
-                    bot.delete_message(user_id, call.message.message_id)
-                except:
-                    pass
+            clean_chat(user_id, call.message.message_id)
             start_handler(call.message)
             bot.answer_callback_query(call.id)
             return
@@ -409,12 +410,12 @@ def callback_handler(call):
         if data.startswith("difficulty:"):
             difficulty = data.split(":", 1)[1]
             test_data = active_tests.get(user_id)
-            if test_
+            if test_data:
                 module_name = test_data['module']
                 module = modules[module_name]
                 info = getattr(module, 'DIFFICULTIES', {}).get(difficulty, {})
                 
-                if 'ql' in dir(module) and module.ql:
+                if hasattr(module, 'ql') and module.ql:
                     questions = module.ql.get_random_questions(info['questions'])
                 else:
                     questions = []
@@ -429,7 +430,6 @@ def callback_handler(call):
                     conn.commit()
                     conn.close()
                 
-                test_data['questions'] = questions
                 bot.answer_callback_query(call.id, f"Сложность: {info['name']}")
                 show_question(user_id, 0)
             return
@@ -444,10 +444,8 @@ def callback_handler(call):
                 with db_lock:
                     conn = sqlite3.connect(DB_PATH, timeout=10)
                     cursor = conn.cursor()
-                    cursor.execute('''
-                        SELECT answers FROM user_progress 
-                        WHERE user_id = ? AND module_name = ?
-                    ''', (user_id, module_name))
+                    cursor.execute('SELECT answers FROM user_progress WHERE user_id = ? AND module_name = ?',
+                                 (user_id, module_name))
                     result = cursor.fetchone()
                     answers = json.loads(result[0]) if result and result[0] else {}
                     
@@ -460,9 +458,8 @@ def callback_handler(call):
                     else:
                         answers[question_idx].append(answer_id)
                     
-                    cursor.execute('''
-                        UPDATE user_progress SET answers = ? WHERE user_id = ? AND module_name = ?
-                    ''', (json.dumps(answers), user_id, module_name))
+                    cursor.execute('UPDATE user_progress SET answers = ? WHERE user_id = ? AND module_name = ?',
+                                 (json.dumps(answers), user_id, module_name))
                     conn.commit()
                     conn.close()
                 
