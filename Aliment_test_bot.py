@@ -41,34 +41,9 @@ def init_test_module(bot_instance=None):
         bot = bot_instance
         conn = sqlite3.connect(db_name, check_same_thread=False)
         cursor = conn.cursor()
-        cursor.executescript("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY, 
-                full_name TEXT, 
-                position TEXT, 
-                department TEXT, 
-                first_start INTEGER DEFAULT 1
-            ); 
-            CREATE TABLE IF NOT EXISTS active_tests (
-                user_id INTEGER PRIMARY KEY, 
-                questions TEXT, 
-                answers TEXT, 
-                start_time REAL, 
-                difficulty TEXT, 
-                current_question INTEGER DEFAULT 0, 
-                message_id INTEGER, 
-                test_time REAL DEFAULT 0
-            ); 
-            CREATE TABLE IF NOT EXISTS stats (
-                user_id INTEGER, 
-                difficulty TEXT, 
-                attempts INTEGER DEFAULT 0, 
-                successful INTEGER DEFAULT 0, 
-                best_score REAL DEFAULT 0, 
-                avg_time REAL DEFAULT 0, 
-                PRIMARY KEY (user_id, difficulty)
-            );
-        """)
+        cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, full_name TEXT, position TEXT, department TEXT, first_start INTEGER DEFAULT 1)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS active_tests (user_id INTEGER PRIMARY KEY, questions TEXT, answers TEXT, start_time REAL, difficulty TEXT, current_question INTEGER DEFAULT 0, message_id INTEGER, test_time REAL DEFAULT 0)")
+        cursor.execute("CREATE TABLE IF NOT EXISTS stats (user_id INTEGER, difficulty TEXT, attempts INTEGER DEFAULT 0, successful INTEGER DEFAULT 0, best_score REAL DEFAULT 0, avg_time REAL DEFAULT 0, PRIMARY KEY (user_id, difficulty))")
         conn.commit()
         print(f"Aliment module OK: {ql.get_questions_count()} questions")
     except Exception as e:
@@ -91,10 +66,7 @@ def start_test(user_id, difficulty):
 def show_difficulty_menu(user_id):
     markup = types.InlineKeyboardMarkup(row_width=1)
     for diff, info in DIFFICULTIES.items():
-        markup.add(types.InlineKeyboardButton(
-            f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", 
-            callback_data=f"{diff}_start"
-        ))
+        markup.add(types.InlineKeyboardButton(f"{info['name']} ({info['questions']}в, {info['time']//60}мин)", callback_data=f"{diff}_start"))
     bot.send_message(user_id, "Выберите сложность:", reply_markup=markup)
 
 def handle_test_text(message):
@@ -129,11 +101,9 @@ def show_next_question(user_id, question_index):
         result = cursor.fetchone()
         if not result:
             return
-        
         questions = json.loads(result[0])
         if question_index >= len(questions):
             return
-        
         q = questions[question_index]
         cursor.execute("SELECT answers FROM active_tests WHERE user_id=?", (user_id,))
         result = cursor.fetchone()
@@ -141,21 +111,17 @@ def show_next_question(user_id, question_index):
         while len(answers) <= question_index:
             answers.append([])
         selected = [idx+1 for idx in answers[question_index]]
-        
         markup = types.InlineKeyboardMarkup(row_width=2)
         for i, option in enumerate(q['options']):
             status = "X" if i in answers[question_index] else str(i+1)
             markup.add(types.InlineKeyboardButton(f"{status} {option}", callback_data=f"answer_{question_index}_{i}"))
-        
         if selected or question_index == len(questions) - 1:
             btn_text = "Завершить тест" if question_index == len(questions) - 1 else "Далее"
             markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"next_{question_index}"))
-        
         remain_time = get_remaining_time(user_id)
         minutes_left = max(0, int(remain_time / 60))
         seconds_left = int(remain_time % 60)
         question_text = f"{minutes_left}:{seconds_left:02d} {question_index+1}/{len(questions)}\n\n{q['question']}\nВыбрано: {len(selected)}"
-        
         cursor.execute("SELECT message_id FROM active_tests WHERE user_id=?", (user_id,))
         msg_result = cursor.fetchone()
         try:
@@ -167,7 +133,6 @@ def show_next_question(user_id, question_index):
         except:
             msg = bot.send_message(user_id, question_text, reply_markup=markup)
             cursor.execute("UPDATE active_tests SET message_id=? WHERE user_id=?", (msg.message_id, user_id))
-        
         cursor.execute("UPDATE active_tests SET current_question=? WHERE user_id=?", (question_index, user_id))
         conn.commit()
 
@@ -194,68 +159,46 @@ def finish_test(user_id, timeout=False):
     if user_id in active_timers:
         active_timers[user_id].cancel()
         del active_timers[user_id]
-    
     try:
         with db_lock:
             cursor.execute("SELECT questions, answers, start_time, difficulty, message_id FROM active_tests WHERE user_id=?", (user_id,))
             result = cursor.fetchone()
-            
             if not result:
                 bot.send_message(user_id, "Нет данных теста")
                 return
-                
             questions = json.loads(result[0])
             user_answers = json.loads(result[1] or '[]')
             start_time = result[2]
             difficulty = result[3]
             msg_id = result[4]
-            
             test_time = time.time() - start_time
             score = 0
             for i, q in enumerate(questions):
                 if len(user_answers) > i and set(user_answers[i]) == set(q['correct']):
                     score += 1
-            
             total_questions = len(questions)
             percent = (score / total_questions) * 100
-            
             cursor.execute("INSERT OR IGNORE INTO stats (user_id, difficulty, attempts) VALUES (?, ?, 0)", (user_id, difficulty))
-            cursor.execute("""
-                UPDATE stats SET 
-                attempts = attempts + 1, 
-                successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, 
-                best_score = CASE WHEN ? > best_score OR best_score = 0 THEN ? ELSE best_score END, 
-                avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts) + ?) / (attempts + 1) END 
-                WHERE user_id = ? AND difficulty = ?
-            """, (percent, percent, percent, test_time, test_time, user_id, difficulty))
-            
+            cursor.execute("UPDATE stats SET attempts = attempts + 1, successful = successful + CASE WHEN ? >= 60 THEN 1 ELSE 0 END, best_score = CASE WHEN ? > best_score OR best_score = 0 THEN ? ELSE best_score END, avg_time = CASE WHEN avg_time = 0 THEN ? ELSE (avg_time * (attempts) + ?) / (attempts + 1) END WHERE user_id = ? AND difficulty = ?", (percent, percent, percent, test_time, test_time, user_id, difficulty))
             cursor.execute("DELETE FROM active_tests WHERE user_id=?", (user_id,))
             conn.commit()
-            
             if msg_id:
                 safe_delete_message(user_id, msg_id)
-        
         result_text = f"Результат: {score}/{total_questions} ({percent:.1f}%) Время: {int(test_time//60)}:{int(test_time%60):02d} {DIFFICULTIES[difficulty]['name']}"
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("Сертификат", callback_data="certificate"))
         markup.add(types.InlineKeyboardButton("Статистика", callback_data="show_stats"))
         markup.add(types.InlineKeyboardButton("Главное меню", callback_data="start_menu"))
-        
         bot.send_message(user_id, result_text, reply_markup=markup)
         current_test_users.discard(user_id)
-        
     except Exception as e:
         bot.send_message(user_id, f"Ошибка завершения: {str(e)}")
 
 def generate_certificate(user_id):
     with db_lock:
-        cursor.execute("""
-            SELECT u.full_name, u.position, u.department, s.best_score, s.difficulty, s.avg_time 
-            FROM users u LEFT JOIN stats s ON u.user_id = s.user_id 
-            WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1
-        """, (user_id,))
+        cursor.execute("SELECT u.full_name, u.position, u.department, s.best_score, s.difficulty, s.avg_time FROM users u LEFT JOIN stats s ON u.user_id = s.user_id WHERE u.user_id = ? ORDER BY s.best_score DESC LIMIT 1", (user_id,))
         data = cursor.fetchone()
-    if not 
+    if not data:
         bot.send_message(user_id, "Нет данных для сертификата")
         return
     filename = f"cert_{user_id}_{int(time.time())}.pdf"
@@ -303,10 +246,8 @@ def show_user_stats(user_id):
 def handle_test_callback(call):
     data = call.data
     user_id = call.from_user.id
-    
     if user_id not in current_test_users and not data.endswith('_start'):
         return False
-        
     try:
         if data.endswith('_start'):
             diff = data.split('_')[0]
@@ -316,11 +257,7 @@ def handle_test_callback(call):
             questions = ql.get_random_questions(info['questions'])
             start_time = time.time()
             with db_lock:
-                cursor.execute("""
-                    INSERT OR REPLACE INTO active_tests 
-                    (user_id, questions, answers, start_time, difficulty, current_question) 
-                    VALUES (?, ?, '[]', ?, ?, 0)
-                """, (user_id, json.dumps(questions), start_time, diff))
+                cursor.execute("INSERT OR REPLACE INTO active_tests (user_id, questions, answers, start_time, difficulty, current_question) VALUES (?, ?, '[]', ?, ?, 0)", (user_id, json.dumps(questions), start_time, diff))
                 conn.commit()
             timer = threading.Timer(info['time'], lambda: finish_test(user_id, True))
             timer.start_time = start_time
@@ -328,11 +265,9 @@ def handle_test_callback(call):
             timer.start()
             show_next_question(user_id, 0)
             return True
-        
         elif data.startswith('answer_'):
             handle_answer(call)
             return True
-            
         elif data.startswith('next_'):
             question_idx = int(data.split('_')[1])
             with db_lock:
