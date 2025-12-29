@@ -169,6 +169,7 @@ def process_department(message):
         conn.commit()
         conn.close()
     
+    del user_states[user_id]
     start_quiz(user_id, module_name, None)
 
 def start_quiz(user_id, module_name, message_id):
@@ -187,12 +188,12 @@ def start_quiz(user_id, module_name, message_id):
     try:
         start_time = time.time()
         with db_lock:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=10)
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO user_progress 
                 (user_id, module_name, current_question, start_time, answers, difficulty)
-                VALUES (?, ?, 0, ?, '{}', '')
+                VALUES (?, ?, 0, ?, '{}", '')
             ''', (user_id, module_name, start_time))
             conn.commit()
             conn.close()
@@ -219,7 +220,7 @@ def show_question(user_id, question_index):
     
     try:
         with db_lock:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=10)
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT answers, difficulty, questions FROM user_progress 
@@ -228,7 +229,7 @@ def show_question(user_id, question_index):
             result = cursor.fetchone()
             conn.close()
         
-        answers = eval(result[0]) if result and result[0] else {}
+        answers = json.loads(result[0]) if result and result[0] else {}
         difficulty = result[1] if result else ''
         stored_questions = json.loads(result[2]) if result and result[2] else []
         
@@ -295,7 +296,7 @@ def finish_test(user_id):
     
     try:
         with db_lock:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=10)
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT answers, start_time, questions FROM user_progress 
@@ -305,7 +306,7 @@ def finish_test(user_id):
             conn.close()
         
         if result:
-            answers = eval(result[0]) if result[0] else {}
+            answers = json.loads(result[0]) if result[0] else {}
             start_time = result[1]
             stored_questions = json.loads(result[2]) if result[2] else []
             time_spent = time.time() - start_time
@@ -317,7 +318,7 @@ def finish_test(user_id):
             total_questions = len(questions)
             
             with db_lock:
-                conn = sqlite3.connect(DB_PATH)
+                conn = sqlite3.connect(DB_PATH, timeout=10)
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT INTO test_results (user_id, module_name, score, total_questions, time_spent)
@@ -336,30 +337,30 @@ def finish_test(user_id):
             
             percentage = (score / total_questions) * 100 if total_questions > 0 else 0
             result_text = f"""
-🎉 Тест завершен!
+Тест завершен!
 
 Результаты:
-✅ Правильных: {score}/{total_questions}
-📊 Процент: {percentage:.1f}%
-⏱️ Время: {time_spent:.0f}с
+Правильных: {score}/{total_questions}
+Процент: {percentage:.1f}%
+Время: {time_spent:.0f}с
 
 Модуль: {module_name.replace('_', ' ').title()}
             """
             
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔄 Новый тест", callback_data="start"))
+            markup.add(types.InlineKeyboardButton("Новый тест", callback_data="start"))
             
             bot.send_message(user_id, result_text.strip(), reply_markup=markup)
             
             if hasattr(module, 'generate_certificate'):
                 try:
                     certificate_path = module.generate_certificate(user_id, score, total_questions, time_spent)
-                    if certificate_path:
+                    if certificate_path and Path(certificate_path).exists():
                         with open(certificate_path, 'rb') as cert:
                             bot.send_document(user_id, cert, caption="Сертификат")
                         os.remove(certificate_path)
-                except:
-                    pass
+                except Exception as cert_e:
+                    logger.error(f"Certificate error: {cert_e}")
         
         del active_tests[user_id]
         
@@ -394,18 +395,18 @@ def callback_handler(call):
         if data.startswith("difficulty:"):
             difficulty = data.split(":", 1)[1]
             test_data = active_tests.get(user_id)
-            if test_
+            if test_data:
                 module_name = test_data['module']
                 module = modules[module_name]
                 info = getattr(module, 'DIFFICULTIES', {}).get(difficulty, {})
                 
-                if 'ql' in dir(module):
+                if 'ql' in dir(module) and module.ql:
                     questions = module.ql.get_random_questions(info['questions'])
                 else:
                     questions = []
                 
                 with db_lock:
-                    conn = sqlite3.connect(DB_PATH)
+                    conn = sqlite3.connect(DB_PATH, timeout=10)
                     cursor = conn.cursor()
                     cursor.execute('''
                         UPDATE user_progress SET difficulty = ?, questions = ? 
@@ -427,14 +428,14 @@ def callback_handler(call):
             
             if user_id in active_tests and active_tests[user_id]['module'] == module_name:
                 with db_lock:
-                    conn = sqlite3.connect(DB_PATH)
+                    conn = sqlite3.connect(DB_PATH, timeout=10)
                     cursor = conn.cursor()
                     cursor.execute('''
                         SELECT answers FROM user_progress 
                         WHERE user_id = ? AND module_name = ?
                     ''', (user_id, module_name))
                     result = cursor.fetchone()
-                    answers = eval(result[0]) if result and result[0] else {}
+                    answers = json.loads(result[0]) if result and result[0] else {}
                     
                     if question_idx not in answers:
                         answers[question_idx] = []
@@ -447,7 +448,7 @@ def callback_handler(call):
                     
                     cursor.execute('''
                         UPDATE user_progress SET answers = ? WHERE user_id = ? AND module_name = ?
-                    ''', (str(answers), user_id, module_name))
+                    ''', (json.dumps(answers), user_id, module_name))
                     conn.commit()
                     conn.close()
                 
