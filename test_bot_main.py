@@ -70,10 +70,15 @@ def init_db():
 def load_modules():
     global modules
     modules_dir = Path(".")
+    logger.info(f"Scanning directory: {modules_dir}")
+    
     for module_file in modules_dir.glob("*.py"):
+        logger.info(f"Found file: {module_file.name}")
         if module_file.name in ["test_bot_main.py", "__init__.py"]:
             continue
         module_name = module_file.stem
+        logger.info(f"Attempting to load module: {module_name}")
+        
         try:
             spec = importlib.util.spec_from_file_location(module_name, module_file)
             if spec:
@@ -82,9 +87,16 @@ def load_modules():
                 spec.loader.exec_module(module)
                 if hasattr(module, 'get_questions'):
                     modules[module_name] = module
-                    logger.info(f"Loaded module: {module_name}")
+                    logger.info(f"✅ SUCCESS: Loaded module {module_name}")
+                else:
+                    logger.error(f"❌ FAIL: {module_name} missing get_questions()")
+            else:
+                logger.error(f"❌ FAIL: No spec for {module_name}")
         except Exception as e:
-            logger.error(f"Failed to load module {module_name}: {e}")
+            logger.error(f"❌ CRASH loading {module_name}: {e}")
+    
+    logger.info(f"Total modules loaded: {len(modules)}")
+    logger.info(f"Loaded modules: {list(modules.keys())}")
 
 def clean_chat(user_id, message_id):
     try:
