@@ -1,4 +1,4 @@
-# 29.12 14:48 test_bot_main.py
+# 29.12 15:05 test_bot_main.py
 import os
 import sys
 import time
@@ -93,32 +93,51 @@ def clean_chat(user_id, message_id):
     except:
         pass
 
+def create_modules_keyboard():
+    """Создает клавиатуру с 11 кнопками в 2 колонки внизу экрана"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    module_buttons = []
+    
+    for module_name in modules:
+        module_buttons.append(types.KeyboardButton(
+            f"Тест: {module_name.replace('_', ' ').title()[:20]}"
+        ))
+    
+    # Распределяем кнопки по 2 в ряд
+    for i in range(0, len(module_buttons), 2):
+        if i + 1 < len(module_buttons):
+            markup.row(module_buttons[i], module_buttons[i+1])
+        else:
+            markup.row(module_buttons[i])
+    
+    markup.row(types.KeyboardButton("🆘 Помощь"))
+    return markup
+
 @bot.message_handler(commands=['start'])
+@bot.message_handler(func=lambda message: message.text == "🆘 Помощь")
 def start_handler(message):
     user_id = message.from_user.id
     clean_chat(user_id, message.message_id)
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    
-    if not modules:
-        bot.send_message(user_id, "Модули тестов не загружены. Перезапуск...")
+    if message.text == "🆘 Помощь":
+        bot.send_message(user_id, 
+            "Инструкция:\n1. Выберите тест из кнопок ниже\n2. Введите данные\n3. Выберите сложность\n4. Отвечайте (можно отменить выбор X)\n5. Далее/Завершить\n6. Получите результат",
+            reply_markup=create_modules_keyboard())
         return
     
-    for module_name in modules:
-        markup.add(types.InlineKeyboardButton(
-            f"Тест: {module_name.replace('_', ' ').title()}", 
-            callback_data=f"start_test:{module_name}"
-        ))
-    
-    markup.add(types.InlineKeyboardButton("Помощь", callback_data="help"))
-    bot.send_message(user_id, "Выберите тест:", reply_markup=markup)
+    bot.send_message(user_id, "🎓 Выберите тест:", reply_markup=create_modules_keyboard())
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('start_test:'))
-def start_test(call):
-    _, module_name = call.data.split(':', 1)
-    user_id = call.from_user.id
+@bot.message_handler(func=lambda message: message.text and message.text.startswith("Тест:"))
+def handle_module_selection(message):
+    user_id = message.from_user.id
+    clean_chat(user_id, message.message_id)
     
-    clean_chat(user_id, call.message.message_id)
+    # Извлекаем module_name из текста кнопки
+    module_name = message.text.replace("Тест: ", "").replace(" ", "_").lower()
+    
+    if module_name not in modules:
+        bot.send_message(user_id, "Модуль не найден", reply_markup=create_modules_keyboard())
+        return
     
     with db_lock:
         conn = sqlite3.connect(DB_PATH)
@@ -128,11 +147,11 @@ def start_test(call):
         conn.close()
     
     if not result:
-        msg = bot.send_message(user_id, "Введите ФИО:")
+        bot.send_message(user_id, "👤 Введите ФИО:", reply_markup=types.ReplyKeyboardRemove())
         user_states[user_id] = {'state': 'waiting_name', 'module': module_name}
-        bot.register_next_step_handler(msg, process_name)
+        bot.register_next_step_handler(message, process_name)
     else:
-        start_quiz(user_id, module_name, call.message.message_id)
+        start_quiz(user_id, module_name, None)
 
 def process_name(message):
     user_id = message.from_user.id
@@ -152,10 +171,10 @@ def process_name(message):
             conn.commit()
             conn.close()
         
-        msg = bot.send_message(user_id, "Введите должность:")
+        bot.send_message(user_id, "💼 Введите должность:")
         user_states[user_id]['full_name'] = full_name
         user_states[user_id]['state'] = 'waiting_position'
-        bot.register_next_step_handler(msg, process_position)
+        bot.register_next_step_handler(message, process_position)
 
 def process_position(message):
     user_id = message.from_user.id
@@ -168,9 +187,9 @@ def process_position(message):
     position = message.text.strip()
     user_states[user_id]['position'] = position
     
-    msg = bot.send_message(user_id, "Введите отдел:")
+    bot.send_message(user_id, "🏢 Введите отдел:")
     user_states[user_id]['state'] = 'waiting_department'
-    bot.register_next_step_handler(msg, process_department)
+    bot.register_next_step_handler(message, process_department)
 
 def process_department(message):
     user_id = message.from_user.id
@@ -196,7 +215,7 @@ def process_department(message):
 
 def start_quiz(user_id, module_name, message_id):
     if module_name not in modules:
-        bot.send_message(user_id, "Модуль не загружен")
+        bot.send_message(user_id, "Модуль не загружен", reply_markup=create_modules_keyboard())
         return
     
     module = modules[module_name]
@@ -227,7 +246,7 @@ def start_quiz(user_id, module_name, message_id):
         
     except Exception as e:
         logger.error(f"Error starting quiz {module_name}: {e}")
-        bot.send_message(user_id, "Ошибка запуска теста")
+        bot.send_message(user_id, "Ошибка запуска теста", reply_markup=create_modules_keyboard())
 
 def show_question(user_id, question_index):
     if user_id not in active_tests:
@@ -256,7 +275,7 @@ def show_question(user_id, question_index):
         difficulty = result[1] or ''
         stored_questions = json.loads(result[2])
         
-        # ✅ Показываем меню сложностей если нет вопросов
+        # Показываем меню сложностей если нет вопросов
         if not stored_questions or difficulty == '':
             module_data = module.get_questions()
             if isinstance(module_data, dict) and module_data.get('type') == 'difficulty_menu':
@@ -267,10 +286,10 @@ def show_question(user_id, question_index):
                     try:
                         bot.edit_message_text(text, user_id, test_data['message_id'], reply_markup=markup)
                     except:
-                        msg = bot.send_message(user_id, text, reply_markup=markup)
+                        msg = bot.send_message(user_id, text, reply_markup=markup, reply_markup=types.ReplyKeyboardRemove())
                         test_data['message_id'] = msg.message_id
                 else:
-                    msg = bot.send_message(user_id, text, reply_markup=markup)
+                    msg = bot.send_message(user_id, text, reply_markup=markup, reply_markup=types.ReplyKeyboardRemove())
                     test_data['message_id'] = msg.message_id
                 return
         
@@ -301,16 +320,17 @@ def show_question(user_id, question_index):
             try:
                 bot.edit_message_text(text, user_id, test_data['message_id'], reply_markup=markup)
             except:
-                msg = bot.send_message(user_id, text, reply_markup=markup)
+                msg = bot.send_message(user_id, text, reply_markup=markup, reply_markup=types.ReplyKeyboardRemove())
                 test_data['message_id'] = msg.message_id
         else:
-            msg = bot.send_message(user_id, text, reply_markup=markup)
+            msg = bot.send_message(user_id, text, reply_markup=markup, reply_markup=types.ReplyKeyboardRemove())
             test_data['message_id'] = msg.message_id
             
     except Exception as e:
         logger.error(f"Error showing question {question_index}: {e}")
-        bot.send_message(user_id, "Ошибка показа вопроса")
+        bot.send_message(user_id, "Ошибка показа вопроса", reply_markup=create_modules_keyboard())
 
+# Остальные функции без изменений (finish_test, callback_handler)...
 def finish_test(user_id):
     if user_id not in active_tests:
         return
@@ -356,7 +376,7 @@ def finish_test(user_id):
             
             percentage = (score / total_questions) * 100 if total_questions > 0 else 0
             result_text = f"""
-Тест завершен!
+✅ Тест завершен!
 
 Результаты:
 Правильных: {score}/{total_questions}
@@ -367,7 +387,7 @@ def finish_test(user_id):
             """
             
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("Новый тест", callback_data="start"))
+            markup.add(types.InlineKeyboardButton("🔄 Новый тест", callback_data="new_test"))
             
             bot.send_message(user_id, result_text.strip(), reply_markup=markup)
             
@@ -376,7 +396,7 @@ def finish_test(user_id):
                     certificate_path = module.generate_certificate(user_id, score, total_questions, time_spent)
                     if certificate_path and Path(certificate_path).exists():
                         with open(certificate_path, 'rb') as cert:
-                            bot.send_document(user_id, cert, caption="Сертификат")
+                            bot.send_document(user_id, cert, caption="📜 Сертификат")
                         os.remove(certificate_path)
                 except Exception as cert_e:
                     logger.error(f"Certificate error: {cert_e}")
@@ -385,7 +405,7 @@ def finish_test(user_id):
         
     except Exception as e:
         logger.error(f"Error finishing test: {e}")
-        bot.send_message(user_id, "Ошибка завершения теста")
+        bot.send_message(user_id, "Ошибка завершения теста", reply_markup=create_modules_keyboard())
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
@@ -393,24 +413,15 @@ def callback_handler(call):
     data = call.data
     
     try:
-        if data == "start":
-            clean_chat(user_id, call.message.message_id)
-            start_handler(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == "help":
-            bot.edit_message_text(
-                "Инструкция:\n1. Выберите тест\n2. Введите данные\n3. Выберите сложность\n4. Отвечайте (можно отменить выбор X)\n5. Далее/Завершить\n6. Получите результат",
-                user_id, call.message.message_id
-            )
+        if data in ["start", "new_test"]:
+            bot.send_message(user_id, "Выберите тест:", reply_markup=create_modules_keyboard())
             bot.answer_callback_query(call.id)
             return
         
         if data.startswith("difficulty:"):
             difficulty = data.split(":", 1)[1]
             test_data = active_tests.get(user_id)
-            if test_data:
+            if test_
                 module_name = test_data['module']
                 module = modules[module_name]
                 info = getattr(module, 'DIFFICULTIES', {}).get(difficulty, {})
