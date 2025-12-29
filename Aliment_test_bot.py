@@ -1,4 +1,4 @@
-# Aliment_test_bot.py (ФИНАЛЬНАЯ с questions_library)
+# 29.12 12:56 Aliment_test_bot.py (ФИНАЛЬНАЯ с questions_library)
 import json
 import sqlite3
 import time
@@ -10,10 +10,8 @@ from reportlab.lib.units import cm
 from datetime import datetime
 from telebot import types
 
-# ✅ НОВАЯ БИБЛИОТЕКА
 from questions_library import QuestionsLibrary
 
-# ✅ АВТО-ПОИСК JSON
 ql = QuestionsLibrary("Aliment_test_bot_questions.json")
 
 DIFFICULTIES = {
@@ -25,8 +23,10 @@ DIFFICULTIES = {
 
 def get_questions():
     markup = types.InlineKeyboardMarkup(row_width=1)
+    total_questions = ql.get_questions_count()
+    
     for diff_key, info in DIFFICULTIES.items():
-        count = min(info['questions'], ql.get_questions_count())
+        count = min(info['questions'], total_questions)
         markup.add(types.InlineKeyboardButton(
             f"{info['name']} ({count}в, {info['time']//60}мин)", 
             callback_data=f"difficulty:{diff_key}"
@@ -34,8 +34,7 @@ def get_questions():
     return {
         'type': 'difficulty_menu',
         'markup': markup,
-        'text': f'Выберите сложность теста:\nЗагружено вопросов: {ql.get_questions_count()}',
-        'data': list(DIFFICULTIES.keys())
+        'text': f'Выберите сложность теста:\nЗагружено вопросов: {total_questions}'
     }
 
 def calculate_score(questions, answers):
@@ -44,7 +43,7 @@ def calculate_score(questions, answers):
         if i in answers and answers[i]:
             correct_indices = q.get('correct', [])
             user_answer = answers[i]
-            if isinstance(user_answer, list):
+            if isinstance(user_answer, list) and isinstance(correct_indices, list):
                 if set(user_answer) == set(correct_indices):
                     score += 1
             elif isinstance(correct_indices, list) and user_answer == correct_indices[0]:
@@ -62,7 +61,7 @@ def generate_certificate(user_id, score, total_questions, time_spent):
             """, (user_id,))
             user_data = cursor.fetchone()
             
-            if not user_data:
+            if not user_
                 return None
                 
             filename = f"cert_{user_id}_{int(time.time())}.pdf"
