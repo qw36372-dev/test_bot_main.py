@@ -66,32 +66,42 @@ def rate_limit_check(user_id):
     spam_protection[user_id] = now
     return True
 
-def load_module(module_name):
-    module_path = MODULES_DIR / f"{module_name}.py"
-    if not module_path.exists():
-        return None
+def load_modules():
+    if not MODULES_DIR.exists():
+        MODULES_DIR.mkdir(exist_ok=True)
+        logger.error("Папка modules создана")
+        return {}
     
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    modules = {}
+    for file_path in MODULES_DIR.glob("*_test_bot.py"):
+        module_name = file_path.stem
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, file_path)
+            if spec:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                if hasattr(module, 'register_user'):
+                    modules[module_name] = module
+                    logger.info(f"✅ Загружен модуль: {module_name}")
+                else:
+                    logger.error(f"❌ Модуль {module_name} без register_user()")
+        except Exception as e:
+            logger.error(f"❌ Ошибка загрузки {module_name}: {e}")
+    return modules
 
-def safe_edit_message(bot_instance, chat_id, message_id, text, reply_markup=None):
+def safe_edit_message(chat_id, message_id, text, reply_markup=None):
     try:
-        bot_instance.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=text,
-            reply_markup=reply_markup
-        )
-    except telebot.apihelper.ApiTelegramException:
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup)
+    except Exception:
         pass
 
-def safe_delete_message(bot_instance, chat_id, message_id):
+def safe_delete_message(chat_id, message_id):
     try:
-        bot_instance.delete_message(chat_id=chat_id, message_id=message_id)
-    except telebot.apihelper.ApiTelegramException:
+        bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
         pass
+
+test_modules = load_modules()
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -106,12 +116,7 @@ def start_command(message):
     btn_stats = types.InlineKeyboardButton("📊 Моя статистика", callback_data="show_stats")
     markup.add(btn_modules, btn_stats)
     
-    bot.send_message(
-        message.chat.id,
-        "🎓 Добро пожаловать в систему тестирования!\n\n"
-        "Выберите действие:",
-        reply_markup=markup
-    )
+    bot.send_message(message.chat.id, "🎓 Добро пожаловать в систему тестирования!\n\nВыберите действие:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
@@ -125,26 +130,23 @@ def callback_handler(call):
     message_id = call.message.message_id
     
     if data == "select_module":
-        modules = [m.name for m in MODULES_DIR.glob("*.py") if m.name != "__init__.py"]
-        if not modules:
-            safe_edit_message(bot, chat_id, message_id, "❌ Модули тестов не найдены.")
+        if not test_modules:
+            safe_edit_message(chat_id, message_id, "❌ Модули тестов не найдены.")
             return
         
-        markup = types.InlineKeyboardMarkup()
-        for module in modules:
-            btn = types.InlineKeyboardButton(
-                module.replace("_", " ").title(), 
-                callback_data=f"module_{module}"
-            )
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for module_name in test_modules:
+            display_name = module_name.replace("_test_bot", "").replace("_", " ").title()
+            btn = types.InlineKeyboardButton(display_name, callback_data=f"module_{module_name}")
             markup.add(btn)
         markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_main"))
-        safe_edit_message(bot, chat_id, message_id, "📚 Выберите тест:", reply_markup=markup)
+        safe_edit_message(chat_id, message_id, "📚 Выберите тест:", reply_markup=markup)
         user_states[user_id] = {'state': 'select_module'}
     
     elif data.startswith("module_"):
         module_name = data.replace("module_", "")
-        module = load_module(module_name)
-        if module and hasattr(module, 'register_user'):
+        if module_name in test_modules:
+            module = test_modules[module_name]
             user_states[user_id] = {
                 'state': 'register_user',
                 'module_name': module_name,
@@ -152,7 +154,7 @@ def callback_handler(call):
             }
             module.register_user(bot, user_id, chat_id, message_id)
         else:
-            safe_edit_message(bot, chat_id, message_id, f"❌ Модуль {module_name} недоступен.")
+            safe_edit_message(chat_id, message_id, f"❌ Модуль {module_name} недоступен.")
     
     elif data == "show_stats":
         show_user_stats(user_id, chat_id, message_id)
@@ -162,7 +164,7 @@ def callback_handler(call):
         btn_modules = types.InlineKeyboardButton("🚀 Тесты", callback_data="select_module")
         btn_stats = types.InlineKeyboardButton("📊 Моя статистика", callback_data="show_stats")
         markup.add(btn_modules, btn_stats)
-        safe_edit_message(bot, chat_id, message_id, "🎓 Главное меню:", reply_markup=markup)
+        safe_edit_message(chat_id, message_id, "🎓 Главное меню:", reply_markup=markup)
         user_states[user_id] = {'state': 'welcome'}
 
 def show_user_stats(user_id, chat_id, message_id):
@@ -182,7 +184,7 @@ def show_user_stats(user_id, chat_id, message_id):
     
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_main"))
-    safe_edit_message(bot, chat_id, message_id, stats_text, reply_markup=markup)
+    safe_edit_message(chat_id, message_id, stats_text, reply_markup=markup)
 
 def signal_handler(sig, frame):
     logger.info("Shutting down bot...")
