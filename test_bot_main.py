@@ -1,4 +1,4 @@
-# test_bot_main.py 29.12 16:12
+# test_bot_main.py 30.12 14:45
 import os
 import sys
 import time
