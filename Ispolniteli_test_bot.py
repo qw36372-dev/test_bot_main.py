@@ -1,4 +1,4 @@
-# Bezopasnost_test_bot.py 30.12 14:25
+# Ispolniteli_test_bot.py 30.12 14:25
 import json
 import random
 import sqlite3
@@ -9,7 +9,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 import io
 
-MODULE_NAME = "Bezopasnost"
+MODULE_NAME = "Ispolniteli"
 QUESTIONS_FILE = f"{MODULE_NAME}_questions.json"
 DB_PATH = "test_bot.db"
 LEVELS = {
