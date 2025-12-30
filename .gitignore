@@ -1,15 +1,26 @@
+# Базы данных
 *.db
-*_test_bot.db
+test_bot.db
+
+# JSON вопросы (ВСЕ В КОРНЕ)
 *_questions.json
+aliment_questions.json
+*.json
+
+# Python кэш
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+# Virtualenv
 env/
 venv/
 .venv/
 env.bak/
+
+# Пайп
 pip-log.txt
 pip-delete-this-directory.txt
 .tox/
@@ -20,9 +31,13 @@ nosetests.xml
 coverage.xml
 *.cover
 *.log
+
+# Локальные файлы
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+
+# OS файлы
 .DS_Store
 .DS_Store?
 ._*
@@ -30,11 +45,16 @@ db.sqlite3-journal
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Медиа/сертификаты
 *.pdf
 *.jpg
 *.png
+*.jpeg
 background*
 cert_*.pdf
+
+# Логи/временные
 nohup.out
 bot.log
 logs/
@@ -42,4 +62,10 @@ logs/
 *.swo
 *~
 *.bak
+
+# Git
 .gitattributes
+
+# НОВЫЕ ДЛЯ modules/
+modules/__pycache__/
+modules/*.pyc
