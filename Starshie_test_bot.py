@@ -11,7 +11,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import simpleProducer
 import io
 
-QUESTIONS_FILE = "aliment_questions.json"
+QUESTIONS_FILE = "Starshie_questions.json"
 DB_PATH = "test_bot.db"
 
 LEVELS = {
