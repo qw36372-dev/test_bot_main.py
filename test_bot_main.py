@@ -187,13 +187,35 @@ def show_user_stats(user_id, chat_id, message_id):
     safe_edit_message(chat_id, message_id, stats_text, reply_markup=markup)
 
 def signal_handler(sig, frame):
-    logger.info("Shutting down bot...")
-    bot.stop_polling()
+    logger.info("🛑 Graceful shutdown...")
+    try:
+        bot.stop_polling()
+        time.sleep(2)
+    except:
+        pass
     sys.exit(0)
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     init_db()
-    logger.info("Starting test bot...")
-    bot.infinity_polling()
+    
+    try:
+        test_modules = load_modules()
+        logger.info(f"✅ Загружено модулей: {len(test_modules)}")
+        if not test_modules:
+            logger.error("❌ Нет модулей тестов!")
+            sys.exit(1)
+        
+        logger.info("🚀 Starting test bot...")
+        bot.infinity_polling(none_stop=True, timeout=20)
+        
+    except KeyboardInterrupt:
+        logger.info("⌨️ Keyboard interrupt")
+        signal_handler(None, None)
+    except Exception as e:
+        logger.error(f"🚨 Критическая ошибка: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+
